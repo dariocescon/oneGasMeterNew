@@ -73,6 +73,27 @@ class DlmsMeterClientTest {
         assertThrows(DlmsCommunicationException.class, client::connect);
     }
 
+    @Test
+    void readProfileGenericWithoutConnectionThrows() {
+        DlmsTransport transport = createMockTransport();
+        DlmsSessionConfig config = createDefaultConfig();
+        DlmsMeterClient client = new DlmsMeterClient(transport, config);
+
+        assertThrows(DlmsCommunicationException.class,
+                () -> client.readProfileGeneric("0.0.99.98.0.255", null, null));
+    }
+
+    @Test
+    void setPushDestinationWithoutConnectionThrows() {
+        DlmsTransport transport = createMockTransport();
+        DlmsSessionConfig config = createDefaultConfig();
+        DlmsMeterClient client = new DlmsMeterClient(transport, config);
+
+        // Senza connessione, la write fallisce sul transport
+        assertThrows(DlmsCommunicationException.class,
+                () -> client.setPushDestination("10.0.0.1", 4059));
+    }
+
     private DlmsSessionConfig createDefaultConfig() {
         DlmsSessionConfig config = new DlmsSessionConfig();
         config.setClientAddress(16);

@@ -1,5 +1,15 @@
 package com.aton.proj.oneGasMeter.server;
 
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.util.Date;
+import java.util.List;
+import java.util.UUID;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.aton.proj.oneGasMeter.config.DlmsSessionConfig;
 import com.aton.proj.oneGasMeter.cosem.CosemObject;
 import com.aton.proj.oneGasMeter.dlms.DlmsMeterClient;
@@ -9,15 +19,12 @@ import com.aton.proj.oneGasMeter.entity.DeviceCommand;
 import com.aton.proj.oneGasMeter.exception.DlmsCommunicationException;
 import com.aton.proj.oneGasMeter.service.CommandService;
 import com.aton.proj.oneGasMeter.service.TelemetryService;
-import gurux.dlms.objects.GXDLMSClock;
-import gurux.dlms.objects.GXDLMSRegister;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
-import java.net.Socket;
-import java.time.Instant;
-import java.util.List;
-import java.util.UUID;
+import gurux.dlms.objects.GXDLMSClock;
+import gurux.dlms.objects.GXDLMSProfileGeneric;
+import gurux.dlms.objects.GXDLMSRegister;
 
 /**
  * Gestisce una singola sessione di comunicazione con un contatore gas.
@@ -34,6 +41,7 @@ import java.util.UUID;
 public class MeterSessionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(MeterSessionHandler.class);
+    private static final ObjectMapper objectMapper = new ObjectMapper();
 
     private final Socket socket;
     private final DlmsSessionConfig dlmsConfig;
@@ -87,6 +95,13 @@ public class MeterSessionHandler {
             // 6. Disconnetti
             if (client != null) {
                 client.disconnect();
+            } else {
+                // Se client e' null, il transport/socket non e' stato chiuso da disconnect()
+                try {
+                    socket.close();
+                } catch (Exception e) {
+                    log.debug("Errore chiusura socket orfano: {}", e.getMessage());
+                }
             }
         }
     }
@@ -102,7 +117,7 @@ public class MeterSessionHandler {
             }
             // Il seriale puo' essere bytes o stringa
             if (value instanceof byte[]) {
-                return new String((byte[]) value).trim();
+                return new String((byte[]) value, StandardCharsets.UTF_8).trim();
             }
             return String.valueOf(value).trim();
         } catch (DlmsCommunicationException e) {
@@ -116,8 +131,9 @@ public class MeterSessionHandler {
     private Instant readMeterClock(DlmsMeterClient client) {
         try {
             GXDLMSClock clock = client.readClock();
-            if (clock.getTime() != null && clock.getTime().getMeterCalendar() != null) {
-                return clock.getTime().getMeterCalendar().toInstant();
+            var time = clock.getTime();
+            if (time != null && time.getMeterCalendar() != null) {
+                return time.getMeterCalendar().toInstant();
             }
             log.info("Impossibile leggere l'orologio del contatore, uso ora server");
             return Instant.now(); // fallback se il clock non e' disponibile
@@ -219,6 +235,73 @@ public class MeterSessionHandler {
     }
 
     /**
+     * Estrae ip e port dal payload JSON di CHANGE_PUSH_DESTINATION.
+     * Formato atteso: {"ip":"10.0.0.1","port":4059}
+     *
+     * @return array [ip, port] come stringhe
+     */
+    static String[] parsePushDestinationPayload(String payload) {
+        try {
+            JsonNode json = objectMapper.readTree(payload);
+            JsonNode ipNode = json.get("ip");
+            JsonNode portNode = json.get("port");
+            if (ipNode == null || portNode == null) {
+                throw new DlmsCommunicationException(
+                        "Payload CHANGE_PUSH_DESTINATION invalido, servono 'ip' e 'port': " + payload);
+        }
+            return new String[]{ipNode.asText(), portNode.asText()};
+        } catch (DlmsCommunicationException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new DlmsCommunicationException("Errore parsing payload CHANGE_PUSH_DESTINATION: " + payload, e);
+        }
+    }
+
+    /**
+     * Determina l'OBIS code del profilo di carico dal payload JSON.
+     * Formato atteso: {"profile":"daily"} o {"profile":"monthly"}.
+     * Se non specificato, default a LOAD_PROFILE_1 (giornaliero).
+     *
+     * @return OBIS code del profilo selezionato
+     */
+    static String resolveLoadProfileObis(String payload) {
+        if (payload == null || payload.isBlank()) {
+            return CosemObject.LOAD_PROFILE_1.getObisCode();
+        }
+        try {
+            JsonNode json = objectMapper.readTree(payload);
+            String profile = json.has("profile") ? json.get("profile").asText() : "daily";
+            return switch (profile) {
+                case "monthly" -> CosemObject.LOAD_PROFILE_2.getObisCode();
+                default -> CosemObject.LOAD_PROFILE_1.getObisCode();
+            };
+        } catch (Exception e) {
+            return CosemObject.LOAD_PROFILE_1.getObisCode();
+        }
+    }
+
+    /**
+     * Estrae un range temporale opzionale dal payload JSON.
+     * Formato atteso: {"from":"2026-01-01T00:00:00Z","to":"2026-03-28T00:00:00Z"}
+     * Se il payload e' null/vuoto, restituisce [null, null] (lettura completa).
+     *
+     * @return array [from, to] come Date (entrambi possono essere null)
+     */
+    static Date[] parseDateRangePayload(String payload) {
+        if (payload == null || payload.isBlank()) {
+            return new Date[]{null, null};
+        }
+        try {
+            JsonNode json = objectMapper.readTree(payload);
+            Date from = json.has("from") ? Date.from(Instant.parse(json.get("from").asText())) : null;
+            Date to = json.has("to") ? Date.from(Instant.parse(json.get("to").asText())) : null;
+            return new Date[]{from, to};
+        } catch (Exception e) {
+            throw new DlmsCommunicationException("Errore parsing payload date range: " + payload, e);
+        }
+    }
+
+    /**
      * Esegue un singolo comando sul contatore.
      *
      * @param client  client DLMS connesso
@@ -231,7 +314,11 @@ public class MeterSessionHandler {
             client.syncClock();
 
         } else if (type == CommandType.SET_CLOCK) {
-            Instant timestamp = Instant.parse(command.getPayload());
+            String payload = command.getPayload();
+            if (payload == null || payload.isBlank()) {
+                throw new DlmsCommunicationException("Payload mancante per comando SET_CLOCK");
+            }
+            Instant timestamp = Instant.parse(payload);
             client.setClock(timestamp);
 
         } else if (type == CommandType.DISCONNECT_VALVE) {
@@ -241,16 +328,27 @@ public class MeterSessionHandler {
             client.reconnectValve();
 
         } else if (type == CommandType.READ_LOAD_PROFILE) {
-            log.info("Lettura profilo di carico richiesta per {}", command.getSerialNumber());
-            // TODO: implementare lettura selettiva del profilo con date dal payload JSON
+            String payload = command.getPayload();
+            Date[] range = parseDateRangePayload(payload);
+            String obisCode = resolveLoadProfileObis(payload);
+            GXDLMSProfileGeneric profile = client.readProfileGeneric(obisCode, range[0], range[1]);
+            log.info("Load profile ({}) letto: {} righe", obisCode,
+                    profile.getBuffer() != null ? profile.getBuffer().length : 0);
 
         } else if (type == CommandType.READ_EVENT_LOG) {
-            log.info("Lettura log eventi richiesta per {}", command.getSerialNumber());
-            // TODO: implementare lettura log eventi
+            Date[] range = parseDateRangePayload(command.getPayload());
+            GXDLMSProfileGeneric profile = client.readProfileGeneric(
+                    CosemObject.EVENT_LOG.getObisCode(), range[0], range[1]);
+            log.info("Event log letto: {} righe",
+                    profile.getBuffer() != null ? profile.getBuffer().length : 0);
 
         } else if (type == CommandType.CHANGE_PUSH_DESTINATION) {
-            log.info("Cambio destinazione push richiesto per {}", command.getSerialNumber());
-            // TODO: implementare cambio destinazione push con ip/port dal payload JSON
+            String payload = command.getPayload();
+            if (payload == null || payload.isBlank()) {
+                throw new DlmsCommunicationException("Payload mancante per comando CHANGE_PUSH_DESTINATION");
+            }
+            String[] parts = parsePushDestinationPayload(payload);
+            client.setPushDestination(parts[0], Integer.parseInt(parts[1]));
 
         } else {
             throw new DlmsCommunicationException(

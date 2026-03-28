@@ -23,6 +23,7 @@ public class IncomingTcpTransport implements DlmsTransport {
 
     private static final Logger log = LoggerFactory.getLogger(IncomingTcpTransport.class);
     private static final int WRAPPER_HEADER_SIZE = 8;
+    private static final int MAX_PAYLOAD_SIZE = 8192;
 
     private final Socket socket;
     private final InputStream inputStream;
@@ -55,7 +56,7 @@ public class IncomingTcpTransport implements DlmsTransport {
         // Estrai la lunghezza del payload dai bytes 6-7
         int payloadLength = ((header[6] & 0xFF) << 8) | (header[7] & 0xFF);
 
-        if (payloadLength <= 0 || payloadLength > 65535) {
+        if (payloadLength <= 0 || payloadLength > MAX_PAYLOAD_SIZE) {
             throw new IOException("Lunghezza payload WRAPPER non valida: " + payloadLength);
         }
 

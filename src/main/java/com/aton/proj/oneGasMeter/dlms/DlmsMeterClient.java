@@ -230,6 +230,25 @@ public class DlmsMeterClient {
     }
 
     /**
+     * Imposta la destinazione push (IP e porta) sul contatore.
+     *
+     * @param ip   indirizzo IP destinazione (es. "10.0.0.1")
+     * @param port porta destinazione (es. 4059)
+     */
+    public void setPushDestination(String ip, int port) {
+        try {
+            GXDLMSPushSetup pushSetup = new GXDLMSPushSetup(CosemObject.PUSH_SETUP.getObisCode());
+            pushSetup.setDestination(ip + ":" + port);
+
+            byte[][] writeData = gxClient.write(pushSetup, 3);
+            readMultiFrame(writeData);
+            log.info("Destinazione push impostata: {}:{}", ip, port);
+        } catch (Exception e) {
+            throw new DlmsCommunicationException("Errore impostazione destinazione push", e);
+        }
+    }
+
+    /**
      * Verifica se la connessione DLMS e' attiva.
      */
     public boolean isConnected() {

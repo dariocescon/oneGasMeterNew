@@ -6,10 +6,12 @@ import com.aton.proj.oneGasMeter.entity.CommandType;
 import com.aton.proj.oneGasMeter.entity.DeviceCommand;
 import com.aton.proj.oneGasMeter.service.CommandService;
 import com.aton.proj.oneGasMeter.service.TelemetryService;
+import com.aton.proj.oneGasMeter.exception.DlmsCommunicationException;
 import org.junit.jupiter.api.Test;
 
 import java.net.InetAddress;
 import java.net.Socket;
+import java.util.Date;
 import java.util.List;
 
 import static org.mockito.Mockito.*;
@@ -66,6 +68,73 @@ class MeterSessionHandlerTest {
 
         cmd.setStatus(CommandStatus.DONE);
         assertEquals(CommandStatus.DONE, cmd.getStatus());
+    }
+
+    @Test
+    void parsePushDestinationPayload() {
+        String[] result = MeterSessionHandler.parsePushDestinationPayload("{\"ip\":\"10.0.0.1\",\"port\":4059}");
+        assertEquals("10.0.0.1", result[0]);
+        assertEquals("4059", result[1]);
+    }
+
+    @Test
+    void parsePushDestinationPayloadDifferentValues() {
+        String[] result = MeterSessionHandler.parsePushDestinationPayload("{\"ip\":\"192.168.1.100\",\"port\":8080}");
+        assertEquals("192.168.1.100", result[0]);
+        assertEquals("8080", result[1]);
+    }
+
+    @Test
+    void parsePushDestinationPayloadMissingFieldThrows() {
+        org.junit.jupiter.api.Assertions.assertThrows(DlmsCommunicationException.class,
+                () -> MeterSessionHandler.parsePushDestinationPayload("{\"ip\":\"10.0.0.1\"}"));
+    }
+
+    @Test
+    void parseDateRangePayloadWithDates() {
+        Date[] range = MeterSessionHandler.parseDateRangePayload(
+                "{\"from\":\"2026-01-01T00:00:00Z\",\"to\":\"2026-03-28T00:00:00Z\"}");
+        org.junit.jupiter.api.Assertions.assertNotNull(range[0]);
+        org.junit.jupiter.api.Assertions.assertNotNull(range[1]);
+        assertTrue(range[0].before(range[1]));
+    }
+
+    @Test
+    void parseDateRangePayloadNullReturnsNulls() {
+        Date[] range = MeterSessionHandler.parseDateRangePayload(null);
+        org.junit.jupiter.api.Assertions.assertNull(range[0]);
+        org.junit.jupiter.api.Assertions.assertNull(range[1]);
+    }
+
+    @Test
+    void parseDateRangePayloadEmptyReturnsNulls() {
+        Date[] range = MeterSessionHandler.parseDateRangePayload("  ");
+        org.junit.jupiter.api.Assertions.assertNull(range[0]);
+        org.junit.jupiter.api.Assertions.assertNull(range[1]);
+    }
+
+    @Test
+    void parseDateRangePayloadInvalidJsonThrows() {
+        org.junit.jupiter.api.Assertions.assertThrows(DlmsCommunicationException.class,
+                () -> MeterSessionHandler.parseDateRangePayload("{invalid}"));
+    }
+
+    @Test
+    void resolveLoadProfileObisDefaultsToDaily() {
+        assertEquals("7.0.99.99.1.255", MeterSessionHandler.resolveLoadProfileObis(null));
+        assertEquals("7.0.99.99.1.255", MeterSessionHandler.resolveLoadProfileObis(""));
+    }
+
+    @Test
+    void resolveLoadProfileObisDaily() {
+        assertEquals("7.0.99.99.1.255",
+                MeterSessionHandler.resolveLoadProfileObis("{\"profile\":\"daily\"}"));
+    }
+
+    @Test
+    void resolveLoadProfileObisMonthly() {
+        assertEquals("7.0.99.99.2.255",
+                MeterSessionHandler.resolveLoadProfileObis("{\"profile\":\"monthly\"}"));
     }
 
     private void assertTrue(boolean empty) {

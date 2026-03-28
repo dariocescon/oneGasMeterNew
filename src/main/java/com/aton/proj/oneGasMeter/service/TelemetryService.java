@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.HexFormat;
 import java.util.List;
 
 /**
@@ -46,7 +47,7 @@ public class TelemetryService {
         data.setSessionId(sessionId);
         data.setObisCode(obisCode);
         data.setClassId(classId);
-        data.setRawValue(rawValue != null ? String.valueOf(rawValue) : null);
+        data.setRawValue(formatRawValue(rawValue));
         data.setScaler(scaler);
         data.setUnit(unit);
         data.setScaledValue(computeScaledValue(rawValue, scaler));
@@ -70,6 +71,20 @@ public class TelemetryService {
      */
     public List<TelemetryData> findBySerialNumber(String serialNumber) {
         return repository.findBySerialNumber(serialNumber);
+    }
+
+    /**
+     * Converte il valore grezzo in stringa leggibile.
+     * Gestisce byte[] (comune in DLMS) convertendolo in hex.
+     */
+    private String formatRawValue(Object rawValue) {
+        if (rawValue == null) {
+            return null;
+        }
+        if (rawValue instanceof byte[] bytes) {
+            return HexFormat.of().formatHex(bytes);
+        }
+        return String.valueOf(rawValue);
     }
 
     /**
