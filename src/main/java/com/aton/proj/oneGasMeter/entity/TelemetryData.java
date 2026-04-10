@@ -28,7 +28,7 @@ public class TelemetryData {
     private String meterIp;
 
     /** Codice OBIS dell'oggetto COSEM letto */
-    @Column(nullable = false, length = 20)
+    @Column(nullable = false, length = 30)
     private String obisCode;
 
     /** Class ID COSEM */

@@ -6,7 +6,7 @@ CREATE TABLE telemetry_data (
     id                BIGINT IDENTITY(1,1) PRIMARY KEY,
     serial_number     NVARCHAR(64)    NOT NULL,
     meter_ip          NVARCHAR(45)    NOT NULL,
-    obis_code         NVARCHAR(20)    NOT NULL,
+    obis_code         NVARCHAR(30)    NOT NULL,
     class_id          INT             NOT NULL,
     raw_value         NVARCHAR(MAX),
     scaler            FLOAT           NOT NULL DEFAULT 1.0,

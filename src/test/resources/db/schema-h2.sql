@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS telemetry_data (
     id                BIGINT AUTO_INCREMENT PRIMARY KEY,
     serial_number     VARCHAR(64)     NOT NULL,
     meter_ip          VARCHAR(45)     NOT NULL,
-    obis_code         VARCHAR(20)     NOT NULL,
+    obis_code         VARCHAR(30)     NOT NULL,
     class_id          INT             NOT NULL,
     raw_value         CLOB,
     scaler            DOUBLE          NOT NULL DEFAULT 1.0,
