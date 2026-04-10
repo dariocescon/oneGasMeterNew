@@ -53,6 +53,7 @@ public class CompactFrameParser {
             case 7  -> parseCF7(buffer);
             case 8  -> parseCF8(buffer);
             case 9  -> parseCF9(buffer);
+            case 22 -> parseCF22(buffer);
             case 41 -> parseCF41(buffer);
             case 47 -> parseCF47(buffer);
             case 48 -> parseCF48(buffer);
@@ -181,6 +182,49 @@ public class CompactFrameParser {
         }
 
         log.debug("CF6 parsata: piano tariffario passivo ({} byte)", buf.length - 1);
+        return data;
+    }
+
+    /**
+     * CF22 - FW DLMS Transfer Status.
+     *
+     * Layout:
+     * [0]   template_id                    unsigned   (1 byte) = 22
+     * [1]   image_transfer_status          enum       (1 byte)
+     * [2..] image_transferred_blocks_status bit-string (length-prefixed)
+     * [..]  spare                          octet-str  (1+ byte)
+     *
+     * image_transfer_status values:
+     *   0 = image_transfer_not_initiated
+     *   1 = image_transfer_initiated
+     *   2 = image_verification_initiated
+     *   3 = image_verification_successful
+     *   4 = image_verification_failed
+     *   5 = image_activation_initiated
+     *   6 = image_activation_successful
+     *   7 = image_activation_failed
+     */
+    static CompactFrameData parseCF22(byte[] buf) {
+        CompactFrameData data = new CompactFrameData(22);
+        ByteBuffer bb = wrap(buf);
+        bb.get(); // skip template_id
+
+        // image_transfer_status
+        if (bb.remaining() >= 1) {
+            data.put("0.0.44.0.0.255#status", readUint8(bb));
+        }
+
+        // image_transferred_blocks_status: length-prefixed bit-string
+        if (bb.remaining() >= 2) {
+            int len = readUint16(bb);
+            if (len > 0 && bb.remaining() >= len) {
+                byte[] blocks = new byte[len];
+                bb.get(blocks);
+                data.put("0.0.44.0.0.255#blocks", blocks);
+            }
+        }
+
+        log.debug("CF22 parsata: {} campi", data.getValues().size());
         return data;
     }
 

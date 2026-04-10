@@ -435,6 +435,90 @@ public class MeterSessionHandler {
         } else if (type == CommandType.FORCE_EOB) {
             client.executeScript(8); // Script 8 = esecuzione forzata EOB
 
+        } else if (type == CommandType.FW_TRANSFER_INITIATE) {
+            String payload = command.getPayload();
+            if (payload == null || payload.isBlank()) {
+                throw new DlmsCommunicationException("Payload mancante per FW_TRANSFER_INITIATE");
+            }
+            try {
+                JsonNode json = objectMapper.readTree(payload);
+                String identifier = json.get("identifier").asText();
+                int size = json.get("size").asInt();
+                String imageBase64 = json.get("image").asText();
+                byte[] imageData = Base64.getDecoder().decode(imageBase64);
+
+                // 1. Inizia il trasferimento
+                client.imageTransferInitiate(identifier, size);
+
+                // 2. Invia i blocchi (dimensione blocco: 128 byte)
+                int blockSize = 128;
+                int blockNumber = 0;
+                for (int offset = 0; offset < imageData.length; offset += blockSize) {
+                    int end = Math.min(offset + blockSize, imageData.length);
+                    byte[] block = new byte[end - offset];
+                    System.arraycopy(imageData, offset, block, 0, block.length);
+                    client.imageBlockTransfer(blockNumber++, block);
+                }
+                log.info("Firmware trasferito: {} blocchi", blockNumber);
+            } catch (DlmsCommunicationException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new DlmsCommunicationException("Errore parsing payload FW_TRANSFER_INITIATE", e);
+            }
+
+        } else if (type == CommandType.FW_VERIFY) {
+            client.imageVerify();
+
+        } else if (type == CommandType.FW_ACTIVATE) {
+            client.imageActivate();
+
+        } else if (type == CommandType.READ_FW_STATUS) {
+            Object data = client.readFirmwareTransferStatus();
+            log.info("Stato firmware letto: {}", data);
+
+        } else if (type == CommandType.CHANGE_HLS_SECRET) {
+            String payload = command.getPayload();
+            if (payload == null || payload.isBlank()) {
+                throw new DlmsCommunicationException("Payload mancante per CHANGE_HLS_SECRET");
+            }
+            try {
+                JsonNode json = objectMapper.readTree(payload);
+                String assocObis = json.get("association").asText();
+                byte[] secret = Base64.getDecoder().decode(json.get("secret").asText());
+                client.changeHlsSecret(assocObis, secret);
+            } catch (DlmsCommunicationException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new DlmsCommunicationException("Errore parsing payload CHANGE_HLS_SECRET", e);
+            }
+
+        } else if (type == CommandType.GLOBAL_KEY_TRANSFER) {
+            String payload = command.getPayload();
+            if (payload == null || payload.isBlank()) {
+                throw new DlmsCommunicationException("Payload mancante per GLOBAL_KEY_TRANSFER");
+            }
+            try {
+                JsonNode json = objectMapper.readTree(payload);
+                String secSetupObis = json.get("securitySetup").asText();
+                byte[] wrappedKey = Base64.getDecoder().decode(json.get("wrappedKey").asText());
+                client.globalKeyTransfer(secSetupObis, wrappedKey);
+            } catch (DlmsCommunicationException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new DlmsCommunicationException("Errore parsing payload GLOBAL_KEY_TRANSFER", e);
+            }
+
+        } else if (type == CommandType.SET_IM_PERMISSIONS) {
+            String payload = command.getPayload();
+            if (payload == null || payload.isBlank()) {
+                throw new DlmsCommunicationException("Payload mancante per SET_IM_PERMISSIONS");
+            }
+            client.setImPermissions(Integer.parseInt(payload.trim()));
+
+        } else if (type == CommandType.READ_IM_REMAINING_TIME) {
+            long remaining = client.readImRemainingTime();
+            log.info("Tempo residuo I/M: {} secondi", remaining);
+
         } else if (type == CommandType.EXECUTE_SCRIPT) {
             String payload = command.getPayload();
             if (payload == null || payload.isBlank()) {

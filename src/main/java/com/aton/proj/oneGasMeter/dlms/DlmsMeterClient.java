@@ -490,6 +490,179 @@ public class DlmsMeterClient {
         }
     }
 
+    // ========== FIRMWARE UPDATE (Image Transfer, Class 18) ==========
+
+    /**
+     * Inizia il trasferimento di un'immagine firmware.
+     * Corrisponde al metodo image_transfer_initiate (method 1) della Class 18.
+     *
+     * @param imageIdentifier identificativo dell'immagine (es. nome file firmware)
+     * @param imageSize       dimensione totale in byte dell'immagine
+     */
+    public void imageTransferInitiate(String imageIdentifier, int imageSize) {
+        try {
+            GXDLMSImageTransfer img = new GXDLMSImageTransfer(CosemObject.IMAGE_TRANSFER.getObisCode());
+            img.setImageTransferEnabled(true);
+
+            // Abilita il trasferimento (attr 5 = true)
+            byte[][] enableData = gxClient.write(img, 5);
+            readMultiFrame(enableData);
+
+            // Method 1: image_transfer_initiate
+            byte[][] actionData = gxClient.method(img, 1,
+                    imageIdentifier.getBytes(), DataType.OCTET_STRING);
+            readMultiFrame(actionData);
+            log.info("Image transfer iniziato: {} ({} byte)", imageIdentifier, imageSize);
+        } catch (Exception e) {
+            throw new DlmsCommunicationException("Errore inizializzazione image transfer", e);
+        }
+    }
+
+    /**
+     * Trasferisce un blocco di dati dell'immagine firmware.
+     * Corrisponde al metodo image_block_transfer (method 2) della Class 18.
+     *
+     * @param blockNumber numero del blocco (0-based)
+     * @param blockData   dati del blocco
+     */
+    public void imageBlockTransfer(int blockNumber, byte[] blockData) {
+        try {
+            GXDLMSImageTransfer img = new GXDLMSImageTransfer(CosemObject.IMAGE_TRANSFER.getObisCode());
+
+            // Method 2: image_block_transfer - invia il blocco come byte array
+            byte[][] actionData = gxClient.method(img, 2, blockData, DataType.OCTET_STRING);
+            readMultiFrame(actionData);
+            log.debug("Image block {} trasferito ({} byte)", blockNumber, blockData.length);
+        } catch (Exception e) {
+            throw new DlmsCommunicationException("Errore trasferimento blocco " + blockNumber, e);
+        }
+    }
+
+    /**
+     * Verifica l'immagine firmware trasferita.
+     * Corrisponde al metodo image_verify (method 3) della Class 18.
+     */
+    public void imageVerify() {
+        try {
+            GXDLMSImageTransfer img = new GXDLMSImageTransfer(CosemObject.IMAGE_TRANSFER.getObisCode());
+            byte[][] actionData = gxClient.method(img, 3, 0, DataType.INT8);
+            readMultiFrame(actionData);
+            log.info("Image verify eseguito");
+        } catch (Exception e) {
+            throw new DlmsCommunicationException("Errore verifica immagine firmware", e);
+        }
+    }
+
+    /**
+     * Attiva l'immagine firmware verificata.
+     * Corrisponde al metodo image_activate (method 4) della Class 18.
+     * Dopo l'attivazione il contatore si riavviera' con il nuovo firmware.
+     */
+    public void imageActivate() {
+        try {
+            GXDLMSImageTransfer img = new GXDLMSImageTransfer(CosemObject.IMAGE_TRANSFER.getObisCode());
+            byte[][] actionData = gxClient.method(img, 4, 0, DataType.INT8);
+            readMultiFrame(actionData);
+            log.info("Image activate eseguito - il contatore si riavviera'");
+        } catch (Exception e) {
+            throw new DlmsCommunicationException("Errore attivazione immagine firmware", e);
+        }
+    }
+
+    /**
+     * Legge lo stato del trasferimento firmware (CF22).
+     *
+     * @return dati grezzi della CF22 (byte[])
+     */
+    public Object readFirmwareTransferStatus() {
+        return readData(CosemObject.CF22_FW_STATUS.getObisCode());
+    }
+
+    // ========== CAMBIO CHIAVI CRITTOGRAFICHE ==========
+
+    /**
+     * Cambia la chiave HLS (High Level Security secret) di un'associazione.
+     * Corrisponde al metodo change_HLS_secret (method 2) della Class 15 (AssociationLN).
+     *
+     * Associazioni disponibili:
+     * - Management:     0-0:40.0.1.255
+     * - I/M:            0-0:40.0.3.255
+     * - GA:             0-0:40.0.48.255
+     * - Broadcasting:   0-0:40.0.32.255
+     *
+     * @param associationObis OBIS dell'associazione da aggiornare
+     * @param newSecret       nuova chiave/secret (16 byte per AES-128)
+     */
+    public void changeHlsSecret(String associationObis, byte[] newSecret) {
+        try {
+            GXDLMSAssociationLogicalName assoc = new GXDLMSAssociationLogicalName(associationObis);
+            byte[][] actionData = gxClient.method(assoc, 2, newSecret, DataType.OCTET_STRING);
+            readMultiFrame(actionData);
+            log.info("Chiave HLS aggiornata per associazione {}", associationObis);
+        } catch (Exception e) {
+            throw new DlmsCommunicationException(
+                    "Errore cambio chiave HLS per " + associationObis, e);
+        }
+    }
+
+    /**
+     * Aggiorna la Global Encryption Key (chiave di cifratura) tramite SecuritySetup.
+     * Corrisponde al metodo global_key_transfer (method 2) della Class 64.
+     *
+     * @param securitySetupObis OBIS del SecuritySetup (es. 0-0:43.0.1.255 per Management)
+     * @param wrappedKey        nuova chiave avvolta (key-wrapped) con la master key
+     */
+    public void globalKeyTransfer(String securitySetupObis, byte[] wrappedKey) {
+        try {
+            GXDLMSSecuritySetup secSetup = new GXDLMSSecuritySetup(securitySetupObis);
+            byte[][] actionData = gxClient.method(secSetup, 2, wrappedKey, DataType.ARRAY);
+            readMultiFrame(actionData);
+            log.info("Global key transfer eseguito per {}", securitySetupObis);
+        } catch (Exception e) {
+            throw new DlmsCommunicationException(
+                    "Errore global key transfer per " + securitySetupObis, e);
+        }
+    }
+
+    // ========== GESTIONE INSTALLER/MAINTAINER ==========
+
+    /**
+     * Abilita o disabilita l'associazione Installer/Maintainer.
+     * Scrive il campo "permission" dell'oggetto I/M Setup (0-0:94.39.30.255).
+     *
+     * @param permissionBitmask bitmask dei diritti (vedi Appendice H della 11291-12-2)
+     *                          B0=modifiche, B1=reset eventi, B2=parametri metrologia,
+     *                          B3=valvola, B4=batteria, B5=clock, B6=DB reset, B7=PP4
+     */
+    public void setImPermissions(int permissionBitmask) {
+        try {
+            GXDLMSData obj = new GXDLMSData(CosemObject.IM_SETUP.getObisCode());
+            obj.setValue(permissionBitmask);
+            byte[][] writeData = gxClient.write(obj, 2);
+            readMultiFrame(writeData);
+            log.info("Permessi I/M impostati: 0x{}", Integer.toHexString(permissionBitmask));
+        } catch (Exception e) {
+            throw new DlmsCommunicationException("Errore impostazione permessi I/M", e);
+        }
+    }
+
+    /**
+     * Legge il tempo residuo della sessione Installer/Maintainer.
+     * OBIS 0-0:94.39.31.255 (I/M Remaining Time), valore in secondi.
+     *
+     * @return secondi residui, oppure -1 se non disponibile
+     */
+    public long readImRemainingTime() {
+        try {
+            Object value = readData(CosemObject.IM_REMAINING_TIME.getObisCode());
+            if (value instanceof Number n) return n.longValue();
+            return -1;
+        } catch (Exception e) {
+            log.debug("Impossibile leggere tempo residuo I/M: {}", e.getMessage());
+            return -1;
+        }
+    }
+
     /**
      * Verifica se la connessione DLMS e' attiva.
      */

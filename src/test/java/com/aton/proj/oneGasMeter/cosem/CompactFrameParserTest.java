@@ -194,6 +194,23 @@ class CompactFrameParserTest {
         assertEquals(8, data.getValues().size());
     }
 
+    @Test
+    void parseCF22FwTransferStatus() {
+        ByteBuffer bb = ByteBuffer.allocate(6).order(ByteOrder.BIG_ENDIAN);
+        bb.put((byte) 22);          // template_id
+        bb.put((byte) 3);           // image_transfer_status = verification_successful
+        bb.putShort((short) 2);     // bit-string length = 2
+        bb.put((byte) 0xFF);        // blocks status byte 1
+        bb.put((byte) 0xF0);        // blocks status byte 2
+
+        CompactFrameData data = CompactFrameParser.parse(bb.array());
+
+        assertNotNull(data);
+        assertEquals(22, data.getTemplateId());
+        assertEquals(3, data.getInt("0.0.44.0.0.255#status")); // verification_successful
+        assertNotNull(data.get("0.0.44.0.0.255#blocks"));
+    }
+
     // === Utility per costruire buffer di test ===
 
     private byte[] buildCF47(long unixTime, int networkStatus, boolean valveOutput,
