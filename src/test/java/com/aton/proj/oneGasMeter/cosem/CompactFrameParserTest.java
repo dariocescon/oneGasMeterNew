@@ -135,6 +135,65 @@ class CompactFrameParserTest {
         assertEquals(120, data.getInt("0.0.94.39.6.255"));   // Duration
     }
 
+    @Test
+    void parseCF4EobParameters() {
+        ByteBuffer bb = ByteBuffer.allocate(24).order(ByteOrder.BIG_ENDIAN);
+        bb.put((byte) 4);            // template_id
+        bb.putShort((short) 30);     // EOB Snapshot Period = 30 giorni
+        bb.put(new byte[5]);         // EOB Starting Date
+        bb.put(new byte[4]);         // Start Gas Day
+        bb.put(new byte[12]);        // On Demand Snapshot Time
+
+        CompactFrameData data = CompactFrameParser.parse(bb.array());
+
+        assertNotNull(data);
+        assertEquals(4, data.getTemplateId());
+        assertEquals(30, data.getInt("7.0.0.8.23.255"));
+    }
+
+    @Test
+    void parseCF5ActiveTariff() {
+        byte[] buf = new byte[20];
+        buf[0] = 5; // template_id
+        // resto e' il piano tariffario (raw)
+
+        CompactFrameData data = CompactFrameParser.parse(buf);
+
+        assertNotNull(data);
+        assertEquals(5, data.getTemplateId());
+        assertNotNull(data.get("0.0.94.39.21.255"));
+    }
+
+    @Test
+    void parseCF6PassiveTariff() {
+        byte[] buf = new byte[20];
+        buf[0] = 6;
+
+        CompactFrameData data = CompactFrameParser.parse(buf);
+
+        assertNotNull(data);
+        assertEquals(6, data.getTemplateId());
+        assertNotNull(data.get("0.0.94.39.22.255"));
+    }
+
+    @Test
+    void parseCF41CommSetup() {
+        // CF41: template(1) + 4 * (scheduler 45 + setup 23) = 273 byte
+        ByteBuffer bb = ByteBuffer.allocate(273).order(ByteOrder.BIG_ENDIAN);
+        bb.put((byte) 41);
+        for (int i = 0; i < 4; i++) {
+            bb.put(new byte[45]); // scheduler
+            bb.put(new byte[23]); // setup
+        }
+
+        CompactFrameData data = CompactFrameParser.parse(bb.array());
+
+        assertNotNull(data);
+        assertEquals(41, data.getTemplateId());
+        // 4 scheduler + 4 setup = 8 entries
+        assertEquals(8, data.getValues().size());
+    }
+
     // === Utility per costruire buffer di test ===
 
     private byte[] buildCF47(long unixTime, int networkStatus, boolean valveOutput,

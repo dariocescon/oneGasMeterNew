@@ -375,6 +375,122 @@ public class DlmsMeterClient {
     }
 
     /**
+     * Imposta la destinazione push su uno specifico Push Setup (1-4).
+     *
+     * @param pushNumber numero del push setup (1-4)
+     * @param ip         indirizzo IP destinazione
+     * @param port       porta destinazione
+     */
+    public void setPushDestination(int pushNumber, String ip, int port) {
+        String obis = switch (pushNumber) {
+            case 1 -> CosemObject.PUSH_SETUP_1.getObisCode();
+            case 2 -> CosemObject.PUSH_SETUP_2.getObisCode();
+            case 3 -> CosemObject.PUSH_SETUP_3.getObisCode();
+            case 4 -> CosemObject.PUSH_SETUP_4.getObisCode();
+            default -> throw new DlmsCommunicationException("Push Setup non valido: " + pushNumber);
+        };
+        try {
+            GXDLMSPushSetup pushSetup = new GXDLMSPushSetup(obis);
+            pushSetup.setDestination(ip + ":" + port);
+            byte[][] writeData = gxClient.write(pushSetup, 3);
+            readMultiFrame(writeData);
+            log.info("Destinazione Push Setup {} impostata: {}:{}", pushNumber, ip, port);
+        } catch (DlmsCommunicationException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new DlmsCommunicationException("Errore impostazione Push Setup " + pushNumber, e);
+        }
+    }
+
+    /**
+     * Legge la compact frame EOB Parameters (CF4).
+     *
+     * @return dati grezzi della CF4 (byte[])
+     */
+    public Object readEobParameters() {
+        return readData(CosemObject.CF4_EOB_PARAMS.getObisCode());
+    }
+
+    /**
+     * Legge il piano tariffario attivo (CF5).
+     *
+     * @return dati grezzi della CF5 (byte[])
+     */
+    public Object readActiveTariffPlan() {
+        return readData(CosemObject.CF5_ACTIVE_TARIFF.getObisCode());
+    }
+
+    /**
+     * Legge il piano tariffario passivo (CF6).
+     *
+     * @return dati grezzi della CF6 (byte[])
+     */
+    public Object readPassiveTariffPlan() {
+        return readData(CosemObject.CF6_PASSIVE_TARIFF.getObisCode());
+    }
+
+    /**
+     * Scrive il piano tariffario passivo (CF6) sul contatore.
+     * Il piano verra' attivato alla data di attivazione specificata al suo interno.
+     *
+     * @param tariffPlanData dati del piano tariffario in formato compact frame
+     */
+    public void writePassiveTariffPlan(byte[] tariffPlanData) {
+        try {
+            GXDLMSData obj = new GXDLMSData(CosemObject.CF6_PASSIVE_TARIFF.getObisCode());
+            obj.setValue(tariffPlanData);
+            byte[][] writeData = gxClient.write(obj, 2);
+            readMultiFrame(writeData);
+            log.info("Piano tariffario passivo scritto ({} byte)", tariffPlanData.length);
+        } catch (Exception e) {
+            throw new DlmsCommunicationException("Errore scrittura piano tariffario passivo", e);
+        }
+    }
+
+    /**
+     * Legge la configurazione comunicazione PP4 (CF41).
+     *
+     * @return dati grezzi della CF41 (byte[])
+     */
+    public Object readCommSetup() {
+        return readData(CosemObject.CF41_COMM_SETUP.getObisCode());
+    }
+
+    /**
+     * Scrive la configurazione comunicazione PP4 (CF41) sul contatore.
+     *
+     * @param commSetupData dati configurazione in formato compact frame
+     */
+    public void writeCommSetup(byte[] commSetupData) {
+        try {
+            GXDLMSData obj = new GXDLMSData(CosemObject.CF41_COMM_SETUP.getObisCode());
+            obj.setValue(commSetupData);
+            byte[][] writeData = gxClient.write(obj, 2);
+            readMultiFrame(writeData);
+            log.info("Configurazione comunicazione PP4 scritta ({} byte)", commSetupData.length);
+        } catch (Exception e) {
+            throw new DlmsCommunicationException("Errore scrittura configurazione comunicazione PP4", e);
+        }
+    }
+
+    /**
+     * Scrive i parametri EOB (CF4) sul contatore.
+     *
+     * @param eobData dati EOB in formato compact frame
+     */
+    public void writeEobParameters(byte[] eobData) {
+        try {
+            GXDLMSData obj = new GXDLMSData(CosemObject.CF4_EOB_PARAMS.getObisCode());
+            obj.setValue(eobData);
+            byte[][] writeData = gxClient.write(obj, 2);
+            readMultiFrame(writeData);
+            log.info("Parametri EOB scritti ({} byte)", eobData.length);
+        } catch (Exception e) {
+            throw new DlmsCommunicationException("Errore scrittura parametri EOB", e);
+        }
+    }
+
+    /**
      * Verifica se la connessione DLMS e' attiva.
      */
     public boolean isConnected() {

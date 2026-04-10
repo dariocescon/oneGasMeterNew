@@ -3,6 +3,7 @@ package com.aton.proj.oneGasMeter.server;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.Base64;
 import java.util.Date;
 import java.util.List;
 import java.util.UUID;
@@ -243,6 +244,26 @@ public class MeterSessionHandler {
     }
 
     /**
+     * Decodifica un payload Base64 da un comando.
+     * Usato per comandi che trasportano dati binari (compact frame da scrivere).
+     *
+     * @param command     il comando con il payload Base64
+     * @param commandName nome del comando per il messaggio di errore
+     * @return byte[] decodificato
+     */
+    static byte[] parseBase64Payload(DeviceCommand command, String commandName) {
+        String payload = command.getPayload();
+        if (payload == null || payload.isBlank()) {
+            throw new DlmsCommunicationException("Payload mancante per comando " + commandName);
+        }
+        try {
+            return Base64.getDecoder().decode(payload.trim());
+        } catch (IllegalArgumentException e) {
+            throw new DlmsCommunicationException("Payload Base64 non valido per " + commandName, e);
+        }
+    }
+
+    /**
      * Estrae ip e port dal payload JSON di CHANGE_PUSH_DESTINATION.
      * Formato atteso: {"ip":"10.0.0.1","port":4059}
      *
@@ -386,6 +407,30 @@ public class MeterSessionHandler {
             }
             String[] parts = parsePushDestinationPayload(payload);
             client.setPushDestination(parts[0], Integer.parseInt(parts[1]));
+
+        } else if (type == CommandType.READ_EOB_PARAMS) {
+            Object data = client.readEobParameters();
+            log.info("Parametri EOB letti: {}", data);
+
+        } else if (type == CommandType.WRITE_EOB_PARAMS) {
+            byte[] data = parseBase64Payload(command, "WRITE_EOB_PARAMS");
+            client.writeEobParameters(data);
+
+        } else if (type == CommandType.READ_ACTIVE_TARIFF) {
+            Object data = client.readActiveTariffPlan();
+            log.info("Piano tariffario attivo letto: {}", data);
+
+        } else if (type == CommandType.WRITE_PASSIVE_TARIFF) {
+            byte[] data = parseBase64Payload(command, "WRITE_PASSIVE_TARIFF");
+            client.writePassiveTariffPlan(data);
+
+        } else if (type == CommandType.READ_COMM_SETUP) {
+            Object data = client.readCommSetup();
+            log.info("Configurazione comunicazione letta: {}", data);
+
+        } else if (type == CommandType.WRITE_COMM_SETUP) {
+            byte[] data = parseBase64Payload(command, "WRITE_COMM_SETUP");
+            client.writeCommSetup(data);
 
         } else if (type == CommandType.FORCE_EOB) {
             client.executeScript(8); // Script 8 = esecuzione forzata EOB

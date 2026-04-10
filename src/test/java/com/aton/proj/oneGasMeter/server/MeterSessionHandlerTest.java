@@ -137,6 +137,30 @@ class MeterSessionHandlerTest {
                 MeterSessionHandler.resolveLoadProfileObis("{\"profile\":\"monthly\"}"));
     }
 
+    @Test
+    void parseBase64PayloadValid() {
+        DeviceCommand cmd = new DeviceCommand();
+        cmd.setPayload(java.util.Base64.getEncoder().encodeToString(new byte[]{1, 2, 3}));
+        byte[] result = MeterSessionHandler.parseBase64Payload(cmd, "TEST");
+        org.junit.jupiter.api.Assertions.assertArrayEquals(new byte[]{1, 2, 3}, result);
+    }
+
+    @Test
+    void parseBase64PayloadNullThrows() {
+        DeviceCommand cmd = new DeviceCommand();
+        cmd.setPayload(null);
+        org.junit.jupiter.api.Assertions.assertThrows(DlmsCommunicationException.class,
+                () -> MeterSessionHandler.parseBase64Payload(cmd, "TEST"));
+    }
+
+    @Test
+    void parseBase64PayloadInvalidThrows() {
+        DeviceCommand cmd = new DeviceCommand();
+        cmd.setPayload("not-valid-base64!!!");
+        org.junit.jupiter.api.Assertions.assertThrows(DlmsCommunicationException.class,
+                () -> MeterSessionHandler.parseBase64Payload(cmd, "TEST"));
+    }
+
     private void assertTrue(boolean empty) {
         org.junit.jupiter.api.Assertions.assertTrue(empty);
     }

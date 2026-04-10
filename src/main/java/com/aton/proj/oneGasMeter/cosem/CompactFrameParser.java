@@ -47,9 +47,13 @@ public class CompactFrameParser {
 
         return switch (templateId) {
             case 3  -> parseCF3(buffer);
+            case 4  -> parseCF4(buffer);
+            case 5  -> parseCF5(buffer);
+            case 6  -> parseCF6(buffer);
             case 7  -> parseCF7(buffer);
             case 8  -> parseCF8(buffer);
             case 9  -> parseCF9(buffer);
+            case 41 -> parseCF41(buffer);
             case 47 -> parseCF47(buffer);
             case 48 -> parseCF48(buffer);
             case 49 -> parseCF49(buffer);
@@ -87,6 +91,148 @@ public class CompactFrameParser {
         }
 
         log.debug("CF3 parsata: {} campi", data.getValues().size());
+        return data;
+    }
+
+    /**
+     * CF4 - EOB Parameters.
+     *
+     * Contiene: periodo snapshot EOB, data inizio, data/ora snapshot su richiesta,
+     * ora inizio giorno gas, parametri orologio.
+     * La struttura interna e' complessa (date, time). Salviamo i campi principali.
+     */
+    static CompactFrameData parseCF4(byte[] buf) {
+        CompactFrameData data = new CompactFrameData(4);
+        ByteBuffer bb = wrap(buf);
+        bb.get(); // skip template_id
+
+        // EOB Snapshot Period (long-unsigned, giorni)
+        if (bb.remaining() >= 2) data.put("7.0.0.8.23.255", readUint16(bb));
+
+        // EOB Snapshot Starting Date (date = 5 byte)
+        if (bb.remaining() >= 5) {
+            byte[] startDate = new byte[5];
+            bb.get(startDate);
+            data.put("0.0.94.39.11.255", startDate);
+        }
+
+        // Start of Conventional Gas Day (time = 4 byte)
+        if (bb.remaining() >= 4) {
+            byte[] gasDay = new byte[4];
+            bb.get(gasDay);
+            data.put("7.0.0.9.3.255", gasDay);
+        }
+
+        // On Demand Snapshot Time (date-time = 12 byte)
+        if (bb.remaining() >= 12) {
+            byte[] snapshotTime = new byte[12];
+            bb.get(snapshotTime);
+            data.put("0.0.94.39.8.255", snapshotTime);
+        }
+
+        // Il resto contiene parametri orologio (variabili), salva come raw
+        if (bb.remaining() > 0) {
+            byte[] rest = new byte[bb.remaining()];
+            bb.get(rest);
+            data.put("clock_params", rest);
+        }
+
+        log.debug("CF4 parsata: {} campi", data.getValues().size());
+        return data;
+    }
+
+    /**
+     * CF5 - Active Tariff Plan (sola lettura).
+     *
+     * Contiene il piano tariffario attivo (classe proprietaria 8192).
+     * La struttura interna e' complessa: calendar_name, enabled, plan, activation_date_time.
+     * Salviamo il buffer completo come raw per parsing applicativo esterno.
+     */
+    static CompactFrameData parseCF5(byte[] buf) {
+        CompactFrameData data = new CompactFrameData(5);
+        ByteBuffer bb = wrap(buf);
+        bb.get(); // skip template_id
+
+        // Tutto il payload e' la struttura del piano tariffario attivo
+        if (bb.remaining() > 0) {
+            byte[] tariffData = new byte[bb.remaining()];
+            bb.get(tariffData);
+            data.put("0.0.94.39.21.255", tariffData);
+        }
+
+        log.debug("CF5 parsata: piano tariffario attivo ({} byte)", buf.length - 1);
+        return data;
+    }
+
+    /**
+     * CF6 - Passive Tariff Plan (lettura/scrittura).
+     *
+     * Stessa struttura di CF5 ma per il piano tariffario passivo (da programmare).
+     */
+    static CompactFrameData parseCF6(byte[] buf) {
+        CompactFrameData data = new CompactFrameData(6);
+        ByteBuffer bb = wrap(buf);
+        bb.get(); // skip template_id
+
+        if (bb.remaining() > 0) {
+            byte[] tariffData = new byte[bb.remaining()];
+            bb.get(tariffData);
+            data.put("0.0.94.39.22.255", tariffData);
+        }
+
+        log.debug("CF6 parsata: piano tariffario passivo ({} byte)", buf.length - 1);
+        return data;
+    }
+
+    /**
+     * CF41 - Communication Setup PP4.
+     *
+     * Contiene la configurazione di tutti e 4 i push setup/scheduler.
+     * Per ogni push (1-4): scheduler execution_time, push_object_list,
+     * send_destination_and_method, randomisation_start_interval,
+     * number_of_retries, repetition_delay.
+     *
+     * La struttura e' molto lunga e variabile. Estraiamo i campi chiave
+     * per ogni push setup.
+     */
+    static CompactFrameData parseCF41(byte[] buf) {
+        CompactFrameData data = new CompactFrameData(41);
+        ByteBuffer bb = wrap(buf);
+        bb.get(); // skip template_id
+
+        // 4 push setup, ciascuno con scheduler + setup attributes
+        // La struttura esatta dipende dal contenuto variabile delle execution_time
+        // e push_object_list. Salviamo come blocco raw per ogni push.
+        String[] pushSchedulerObis = {
+            "0.1.15.0.4.255", "0.2.15.0.4.255", "0.3.15.0.4.255", "0.4.15.0.4.255"
+        };
+        String[] pushSetupObis = {
+            "0.1.25.9.0.255", "0.2.25.9.0.255", "0.3.25.9.0.255", "0.4.25.9.0.255"
+        };
+
+        // Ogni push block: scheduler(45 byte) + setup(~68 byte) = ~113 byte
+        // Ma la dimensione e' variabile. Salviamo tutto come raw per push.
+        for (int i = 0; i < 4 && bb.remaining() > 0; i++) {
+            // Scheduler execution_time: 45 byte (array of 4 time+date pairs)
+            if (bb.remaining() >= 45) {
+                byte[] schedData = new byte[45];
+                bb.get(schedData);
+                data.put(pushSchedulerObis[i], schedData);
+            }
+
+            // Push Setup attributes: push_object_list(13) + destination(5) +
+            // randomisation(2) + retries(1) + delay(2) = 23 byte minimo
+            if (bb.remaining() >= 23) {
+                byte[] setupData = new byte[23];
+                bb.get(setupData);
+                data.put(pushSetupObis[i], setupData);
+            }
+        }
+
+        // Spare object alla fine
+        // ignorato
+
+        log.debug("CF41 parsata: {} campi", data.getValues().size());
         return data;
     }
 

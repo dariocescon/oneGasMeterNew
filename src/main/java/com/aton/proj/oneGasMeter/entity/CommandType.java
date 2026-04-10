@@ -48,6 +48,20 @@ public enum CommandType {
     /** Forza la chiusura del periodo di fatturazione (script 8) */
     FORCE_EOB,
 
+    // --- Configurazione remota ---
+    /** Leggi parametri EOB (CF4) */
+    READ_EOB_PARAMS,
+    /** Scrivi parametri EOB (payload: byte[] base64 della CF4) */
+    WRITE_EOB_PARAMS,
+    /** Leggi piano tariffario attivo (CF5) */
+    READ_ACTIVE_TARIFF,
+    /** Scrivi piano tariffario passivo (payload: byte[] base64 della CF6) */
+    WRITE_PASSIVE_TARIFF,
+    /** Leggi configurazione comunicazione PP4 (CF41) */
+    READ_COMM_SETUP,
+    /** Scrivi configurazione comunicazione PP4 (payload: byte[] base64 della CF41) */
+    WRITE_COMM_SETUP,
+
     // --- Configurazione dispositivo ---
     /** Esegue uno script del Global Script (payload: script ID come numero) */
     EXECUTE_SCRIPT
