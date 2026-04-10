@@ -11,6 +11,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.aton.proj.oneGasMeter.config.DlmsSessionConfig;
+import com.aton.proj.oneGasMeter.cosem.CompactFrameData;
+import com.aton.proj.oneGasMeter.cosem.CompactFrameParser;
 import com.aton.proj.oneGasMeter.cosem.CosemObject;
 import com.aton.proj.oneGasMeter.dlms.DlmsMeterClient;
 import com.aton.proj.oneGasMeter.dlms.IncomingTcpTransport;
@@ -84,7 +86,10 @@ public class MeterSessionHandler {
             // 4. Leggi e salva tutti gli oggetti COSEM auto-leggibili
             readAndSaveCosemObjects(client, serialNumber, meterIp, sessionId, meterTimestamp);
 
-            // 5. Esegui comandi pendenti
+            // 5. Leggi compact frame push (CF49 = piu' completa)
+            readAndSaveCompactFrame(client, serialNumber, meterIp, sessionId);
+
+            // 6. Esegui comandi pendenti
             executePendingCommands(client, serialNumber, sessionId);
 
             log.info("[{}] Sessione completata per contatore {}", sessionId, serialNumber);
@@ -353,6 +358,59 @@ public class MeterSessionHandler {
         } else {
             throw new DlmsCommunicationException(
                     "Tipo di comando non supportato: " + command.getCommandType());
+        }
+    }
+
+    /**
+     * Legge una compact frame dal contatore e salva i dati estratti in DB.
+     * Tenta CF49 (piu' completa), fallback su CF48, poi CF47.
+     */
+    private void readAndSaveCompactFrame(DlmsMeterClient client, String serialNumber,
+                                          String meterIp, String sessionId) {
+        // Tenta dalla piu' completa alla piu' semplice
+        String[] cfObis = {
+            CosemObject.CF49_CONTENT_C.getObisCode(),
+            CosemObject.CF48_CONTENT_B.getObisCode(),
+            CosemObject.CF47_CONTENT_A.getObisCode()
+        };
+
+        for (String obis : cfObis) {
+            try {
+                Object rawValue = client.readData(obis);
+                if (rawValue instanceof byte[] buffer) {
+                    CompactFrameData cfData = CompactFrameParser.parse(buffer);
+                    if (cfData != null) {
+                        saveCompactFrameData(cfData, serialNumber, meterIp, sessionId);
+                        log.info("[{}] Compact frame CF{} letta e salvata ({} campi)",
+                                sessionId, cfData.getTemplateId(), cfData.getValues().size());
+                        return; // Successo, non provare le altre
+                    }
+                }
+            } catch (Exception e) {
+                log.debug("Compact frame {} non disponibile: {}", obis, e.getMessage());
+            }
+        }
+        log.debug("[{}] Nessuna compact frame push disponibile", sessionId);
+    }
+
+    /**
+     * Salva tutti i valori di una compact frame parsata in telemetry_data.
+     */
+    private void saveCompactFrameData(CompactFrameData cfData, String serialNumber,
+                                       String meterIp, String sessionId) {
+        Instant timestamp = cfData.getTimestamp() != null ? cfData.getTimestamp() : Instant.now();
+
+        for (var entry : cfData.getValues().entrySet()) {
+            String obisCode = entry.getKey();
+            Object value = entry.getValue();
+
+            // Salta i dati binari grezzi (profili, snapshot) - troppo grandi per rawValue
+            if (value instanceof byte[]) {
+                continue;
+            }
+
+            telemetryService.save(serialNumber, meterIp, sessionId,
+                    obisCode, 62, value, 0, null, timestamp);
         }
     }
 }
