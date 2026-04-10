@@ -248,7 +248,7 @@ public class MeterSessionHandler {
             if (ipNode == null || portNode == null) {
                 throw new DlmsCommunicationException(
                         "Payload CHANGE_PUSH_DESTINATION invalido, servono 'ip' e 'port': " + payload);
-        }
+            }
             return new String[]{ipNode.asText(), portNode.asText()};
         } catch (DlmsCommunicationException e) {
             throw e;
@@ -266,17 +266,17 @@ public class MeterSessionHandler {
      */
     static String resolveLoadProfileObis(String payload) {
         if (payload == null || payload.isBlank()) {
-            return CosemObject.LOAD_PROFILE_1.getObisCode();
+            return CosemObject.DAILY_LOAD_PROFILE.getObisCode();
         }
         try {
             JsonNode json = objectMapper.readTree(payload);
             String profile = json.has("profile") ? json.get("profile").asText() : "daily";
             return switch (profile) {
-                case "monthly" -> CosemObject.LOAD_PROFILE_2.getObisCode();
-                default -> CosemObject.LOAD_PROFILE_1.getObisCode();
+                case "monthly" -> CosemObject.SNAPSHOT_PERIOD_DATA.getObisCode();
+                default -> CosemObject.DAILY_LOAD_PROFILE.getObisCode();
             };
         } catch (Exception e) {
-            return CosemObject.LOAD_PROFILE_1.getObisCode();
+            return CosemObject.DAILY_LOAD_PROFILE.getObisCode();
         }
     }
 
@@ -338,7 +338,7 @@ public class MeterSessionHandler {
         } else if (type == CommandType.READ_EVENT_LOG) {
             Date[] range = parseDateRangePayload(command.getPayload());
             GXDLMSProfileGeneric profile = client.readProfileGeneric(
-                    CosemObject.EVENT_LOG.getObisCode(), range[0], range[1]);
+                    CosemObject.METROLOGICAL_LOGBOOK.getObisCode(), range[0], range[1]);
             log.info("Event log letto: {} righe",
                     profile.getBuffer() != null ? profile.getBuffer().length : 0);
 

@@ -57,8 +57,8 @@ class CosemObjectTest {
     }
 
     @Test
-    void gasVolumeTotalIsRegister() {
-        assertEquals(3, CosemObject.GAS_VOLUME_TOTAL.getClassId());
+    void currentIndexConvertedVolIsRegister() {
+        assertEquals(3, CosemObject.CURRENT_INDEX_CONVERTED_VOL.getClassId());
     }
 
     @Test
@@ -67,27 +67,50 @@ class CosemObjectTest {
     }
 
     @Test
-    void loadProfileIsProfileGeneric() {
-        assertEquals(7, CosemObject.LOAD_PROFILE_1.getClassId());
+    void dailyLoadProfileIsProfileGeneric() {
+        assertEquals(7, CosemObject.DAILY_LOAD_PROFILE.getClassId());
     }
 
     @Test
     void isAutoReadableExcludesProfiles() {
-        assertFalse(CosemObject.LOAD_PROFILE_1.isAutoReadable());
-        assertFalse(CosemObject.EVENT_LOG.isAutoReadable());
+        assertFalse(CosemObject.DAILY_LOAD_PROFILE.isAutoReadable());
+        assertFalse(CosemObject.METROLOGICAL_LOGBOOK.isAutoReadable());
     }
 
     @Test
     void isAutoReadableExcludesSecurityAndAssociation() {
-        assertFalse(CosemObject.ASSOCIATION_LN.isAutoReadable());
-        assertFalse(CosemObject.SECURITY_SETUP.isAutoReadable());
+        assertFalse(CosemObject.MGMT_ASSOCIATION.isAutoReadable());
+        assertFalse(CosemObject.MGMT_SECURITY_SETUP.isAutoReadable());
+    }
+
+    @Test
+    void isAutoReadableExcludesCompactFrames() {
+        assertFalse(CosemObject.CF47_CONTENT_A.isAutoReadable());
+        assertFalse(CosemObject.CF49_CONTENT_C.isAutoReadable());
+    }
+
+    @Test
+    void isAutoReadableExcludesPushAndSchedule() {
+        assertFalse(CosemObject.PUSH_SETUP_1.isAutoReadable());
+        assertFalse(CosemObject.PUSH_SCHEDULER_1.isAutoReadable());
     }
 
     @Test
     void isAutoReadableIncludesDataAndRegisters() {
         assertTrue(CosemObject.SERIAL_NUMBER.isAutoReadable());
-        assertTrue(CosemObject.GAS_VOLUME_TOTAL.isAutoReadable());
+        assertTrue(CosemObject.CURRENT_INDEX_CONVERTED_VOL.isAutoReadable());
         assertTrue(CosemObject.CLOCK.isAutoReadable());
         assertTrue(CosemObject.VALVE_STATE.isAutoReadable());
+    }
+
+    @Test
+    void enumContainsExpectedNormativeObjects() {
+        // Verifica che tutti gli oggetti chiave della normativa siano presenti
+        assertTrue(CosemObject.findByObisCode("0.0.1.1.0.255").isPresent(), "UNIX_TIME mancante");
+        assertTrue(CosemObject.findByObisCode("7.0.13.2.0.255").isPresent(), "CURRENT_INDEX_CONVERTED_VOL mancante");
+        assertTrue(CosemObject.findByObisCode("7.0.99.99.3.255").isPresent(), "DAILY_LOAD_PROFILE mancante");
+        assertTrue(CosemObject.findByObisCode("7.0.99.98.1.255").isPresent(), "METROLOGICAL_LOGBOOK mancante");
+        assertTrue(CosemObject.findByObisCode("0.0.66.0.49.255").isPresent(), "CF49_CONTENT_C mancante");
+        assertTrue(CosemObject.findByObisCode("0.0.44.0.0.255").isPresent(), "IMAGE_TRANSFER mancante");
     }
 }

@@ -121,19 +121,19 @@ class MeterSessionHandlerTest {
 
     @Test
     void resolveLoadProfileObisDefaultsToDaily() {
-        assertEquals("7.0.99.99.1.255", MeterSessionHandler.resolveLoadProfileObis(null));
-        assertEquals("7.0.99.99.1.255", MeterSessionHandler.resolveLoadProfileObis(""));
+        assertEquals("7.0.99.99.3.255", MeterSessionHandler.resolveLoadProfileObis(null));
+        assertEquals("7.0.99.99.3.255", MeterSessionHandler.resolveLoadProfileObis(""));
     }
 
     @Test
     void resolveLoadProfileObisDaily() {
-        assertEquals("7.0.99.99.1.255",
+        assertEquals("7.0.99.99.3.255",
                 MeterSessionHandler.resolveLoadProfileObis("{\"profile\":\"daily\"}"));
     }
 
     @Test
     void resolveLoadProfileObisMonthly() {
-        assertEquals("7.0.99.99.2.255",
+        assertEquals("7.0.98.11.0.255",
                 MeterSessionHandler.resolveLoadProfileObis("{\"profile\":\"monthly\"}"));
     }
 

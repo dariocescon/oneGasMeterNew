@@ -237,7 +237,7 @@ public class DlmsMeterClient {
      */
     public void setPushDestination(String ip, int port) {
         try {
-            GXDLMSPushSetup pushSetup = new GXDLMSPushSetup(CosemObject.PUSH_SETUP.getObisCode());
+            GXDLMSPushSetup pushSetup = new GXDLMSPushSetup(CosemObject.PUSH_SETUP_1.getObisCode());
             pushSetup.setDestination(ip + ":" + port);
 
             byte[][] writeData = gxClient.write(pushSetup, 3);
