@@ -97,6 +97,44 @@ class CompactFrameParserTest {
         assertEquals(Instant.ofEpochSecond(epoch), data.getTimestamp());
     }
 
+    @Test
+    void parseCF7ValveProgramming() {
+        ByteBuffer bb = ByteBuffer.allocate(12).order(ByteOrder.BIG_ENDIAN);
+        bb.put((byte) 7);           // template_id
+        bb.putShort((short) 1234);  // Valve Config PGV
+        bb.put((byte) 5);           // Max Password Attempts
+        bb.put((byte) 1);           // array count
+        bb.putShort((short) 30);    // Days Without Comms = 30
+        bb.put((byte) 1);           // array count
+        bb.putInt(100);             // Tampering Attempts = 100
+
+        CompactFrameData data = CompactFrameParser.parse(bb.array());
+
+        assertNotNull(data);
+        assertEquals(7, data.getTemplateId());
+        assertEquals(1234, data.getInt("0.0.94.39.3.255"));  // PGV
+        assertEquals(5, data.getInt("0.0.94.39.2.255"));     // Max Password
+        assertEquals(30, data.getInt("0.0.94.39.5.255"));    // Days Without Comms
+        assertEquals(100L, data.getLong("0.0.94.39.25.255")); // Tampering Threshold
+    }
+
+    @Test
+    void parseCF9ValveManagement() {
+        ByteBuffer bb = ByteBuffer.allocate(30).order(ByteOrder.BIG_ENDIAN);
+        bb.put((byte) 9);             // template_id
+        bb.put(new byte[13]);         // script reference (zeros)
+        bb.put(new byte[12]);         // execution time (zeros)
+        bb.putShort((short) 9999);    // Valve Enable Password
+        bb.putShort((short) 120);     // Opening Command Duration
+
+        CompactFrameData data = CompactFrameParser.parse(bb.array());
+
+        assertNotNull(data);
+        assertEquals(9, data.getTemplateId());
+        assertEquals(9999, data.getInt("0.0.94.39.1.255"));  // Password
+        assertEquals(120, data.getInt("0.0.94.39.6.255"));   // Duration
+    }
+
     // === Utility per costruire buffer di test ===
 
     private byte[] buildCF47(long unixTime, int networkStatus, boolean valveOutput,

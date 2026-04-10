@@ -47,7 +47,9 @@ public class CompactFrameParser {
 
         return switch (templateId) {
             case 3  -> parseCF3(buffer);
+            case 7  -> parseCF7(buffer);
             case 8  -> parseCF8(buffer);
+            case 9  -> parseCF9(buffer);
             case 47 -> parseCF47(buffer);
             case 48 -> parseCF48(buffer);
             case 49 -> parseCF49(buffer);
@@ -85,6 +87,95 @@ public class CompactFrameParser {
         }
 
         log.debug("CF3 parsata: {} campi", data.getValues().size());
+        return data;
+    }
+
+    /**
+     * CF7 - Valve Programming.
+     *
+     * Layout:
+     * [0]    template_id                  unsigned          (1 byte) = 7
+     * [1-2]  Valve Configuration PGV      long-unsigned     (2 byte)
+     * [3]    Maximum Password Attempts    unsigned          (1 byte)
+     * [4-6]  Days Without Comms Threshold array 1 l-u       (3 byte: 1 len + 2 value)
+     * [7-11] Tampering Attempts Threshold array 1 dlu       (5 byte: 1 len + 4 value)
+     * [12-15] Leakage Test Parameters     structure         (4 byte)
+     * [16]   spare                        octet-string      (1+ byte)
+     */
+    static CompactFrameData parseCF7(byte[] buf) {
+        CompactFrameData data = new CompactFrameData(7);
+        ByteBuffer bb = wrap(buf);
+        bb.get(); // skip template_id
+
+        if (bb.remaining() >= 2) data.put("0.0.94.39.3.255", readUint16(bb));   // Valve Config PGV
+        if (bb.remaining() >= 1) data.put("0.0.94.39.2.255", readUint8(bb));    // Max Password Attempts
+
+        // Days Without Comms Threshold: array of 1 long-unsigned (1 byte count + 2 byte value)
+        if (bb.remaining() >= 3) {
+            int count = readUint8(bb);
+            if (count >= 1 && bb.remaining() >= 2) {
+                data.put("0.0.94.39.5.255", readUint16(bb));
+            }
+        }
+
+        // Tampering Attempts Threshold: array of 1 double-long-unsigned
+        if (bb.remaining() >= 5) {
+            int count = readUint8(bb);
+            if (count >= 1 && bb.remaining() >= 4) {
+                data.put("0.0.94.39.25.255", readUint32(bb));
+            }
+        }
+
+        // Leakage Test Parameters: structure (salva come raw)
+        if (bb.remaining() >= 4) {
+            byte[] leakParams = new byte[4];
+            bb.get(leakParams);
+            data.put("0.0.94.39.26.255", leakParams);
+        }
+
+        log.debug("CF7 parsata: {} campi", data.getValues().size());
+        return data;
+    }
+
+    /**
+     * CF9 - Valve Management.
+     *
+     * Layout:
+     * [0]     template_id                  unsigned       (1 byte) = 9
+     * [1-9+]  Disconnect ctrl schedule     executed_script + execution_time (variabile)
+     * [..]    Valve Enable Password        long-unsigned  (2 byte)
+     * [..]    Opening Command Duration     long-unsigned  (2 byte)
+     * [..]    spare                        octet-string   (1+ byte)
+     *
+     * La struttura e' complessa (script reference + time array).
+     * Estraiamo i campi semplici alla fine.
+     */
+    static CompactFrameData parseCF9(byte[] buf) {
+        CompactFrameData data = new CompactFrameData(9);
+        ByteBuffer bb = wrap(buf);
+        bb.get(); // skip template_id
+
+        // executed_script: structure (octet-string 9 byte + long-unsigned 2 byte) = ~13 byte
+        if (bb.remaining() >= 13) {
+            byte[] scriptRef = new byte[13];
+            bb.get(scriptRef);
+            data.put("0.0.15.0.1.255#script", scriptRef);
+        }
+
+        // execution_time: array of 1 (time 4 byte + date 5 byte) = ~12 byte con header
+        if (bb.remaining() >= 12) {
+            byte[] execTime = new byte[12];
+            bb.get(execTime);
+            data.put("0.0.15.0.1.255#time", execTime);
+        }
+
+        // Valve Enable Password
+        if (bb.remaining() >= 2) data.put("0.0.94.39.1.255", readUint16(bb));
+
+        // Opening Command Duration Validity
+        if (bb.remaining() >= 2) data.put("0.0.94.39.6.255", readUint16(bb));
+
+        log.debug("CF9 parsata: {} campi", data.getValues().size());
         return data;
     }
 

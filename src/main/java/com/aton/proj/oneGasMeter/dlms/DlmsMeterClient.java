@@ -290,17 +290,69 @@ public class DlmsMeterClient {
     }
 
     /**
-     * Invia il comando di disconnessione della valvola gas.
+     * Invia il comando di disconnessione (chiusura) della valvola gas.
+     * DisconnectControl (Class 70), method 1 = remote_disconnect.
      */
     public void disconnectValve() {
         executeMethod(CosemObject.VALVE_STATE.getObisCode(), 70, 1, 0, DataType.INT8);
     }
 
     /**
-     * Invia il comando di riconnessione della valvola gas.
+     * Invia il comando di riconnessione (apertura) della valvola gas.
+     * DisconnectControl (Class 70), method 2 = remote_reconnect.
      */
     public void reconnectValve() {
         executeMethod(CosemObject.VALVE_STATE.getObisCode(), 70, 2, 0, DataType.INT8);
+    }
+
+    /**
+     * Imposta la password di abilitazione della valvola.
+     * OBIS 0-0:94.39.1.255 (Valve Enable Password), tipo long-unsigned.
+     *
+     * @param password valore numerico della password (0-65535)
+     */
+    public void setValvePassword(int password) {
+        try {
+            GXDLMSData obj = new GXDLMSData(CosemObject.VALVE_ENABLE_PASSWORD.getObisCode());
+            obj.setValue(password);
+            byte[][] writeData = gxClient.write(obj, 2);
+            readMultiFrame(writeData);
+            log.info("Password valvola impostata");
+        } catch (Exception e) {
+            throw new DlmsCommunicationException("Errore impostazione password valvola", e);
+        }
+    }
+
+    /**
+     * Imposta la durata di validita' del comando di apertura della valvola (in minuti).
+     * OBIS 0-0:94.39.6.255 (Opening Command Duration Validity), tipo long-unsigned.
+     *
+     * @param durationMinutes durata in minuti (0 = nessun limite)
+     */
+    public void setValveOpeningDuration(int durationMinutes) {
+        try {
+            GXDLMSData obj = new GXDLMSData(CosemObject.VALVE_OPENING_DURATION.getObisCode());
+            obj.setValue(durationMinutes);
+            byte[][] writeData = gxClient.write(obj, 2);
+            readMultiFrame(writeData);
+            log.info("Durata apertura valvola impostata a {} minuti", durationMinutes);
+        } catch (Exception e) {
+            throw new DlmsCommunicationException("Errore impostazione durata apertura valvola", e);
+        }
+    }
+
+    /**
+     * Legge lo stato corrente della valvola.
+     * Legge output_state (attr 2) e control_state (attr 3) dal DisconnectControl.
+     *
+     * @return array [output_state (boolean), control_state (int)]
+     */
+    public Object[] readValveState() {
+        String obis = CosemObject.VALVE_STATE.getObisCode();
+        GXDLMSDisconnectControl obj = new GXDLMSDisconnectControl(obis);
+        readObject(obj, 2); // output_state
+        readObject(obj, 3); // control_state
+        return new Object[]{ obj.getOutputState(), obj.getControlState() };
     }
 
     /**

@@ -335,6 +335,20 @@ public class MeterSessionHandler {
         } else if (type == CommandType.RECONNECT_VALVE) {
             client.reconnectValve();
 
+        } else if (type == CommandType.SET_VALVE_PASSWORD) {
+            String payload = command.getPayload();
+            if (payload == null || payload.isBlank()) {
+                throw new DlmsCommunicationException("Payload mancante per SET_VALVE_PASSWORD");
+            }
+            client.setValvePassword(Integer.parseInt(payload.trim()));
+
+        } else if (type == CommandType.SET_VALVE_OPENING_DURATION) {
+            String payload = command.getPayload();
+            if (payload == null || payload.isBlank()) {
+                throw new DlmsCommunicationException("Payload mancante per SET_VALVE_OPENING_DURATION");
+            }
+            client.setValveOpeningDuration(Integer.parseInt(payload.trim()));
+
         } else if (type == CommandType.READ_LOAD_PROFILE) {
             String payload = command.getPayload();
             Date[] range = parseDateRangePayload(payload);

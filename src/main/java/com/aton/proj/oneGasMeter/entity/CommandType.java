@@ -21,6 +21,10 @@ public enum CommandType {
     DISCONNECT_VALVE,
     /** Riapri la valvola del gas */
     RECONNECT_VALVE,
+    /** Imposta la password della valvola (payload: numero 0-65535) */
+    SET_VALVE_PASSWORD,
+    /** Imposta la durata di validita' del comando di apertura (payload: minuti) */
+    SET_VALVE_OPENING_DURATION,
 
     // --- Push ---
     /** Cambia la destinazione push del contatore (payload: {"ip":"...", "port":...}) */
