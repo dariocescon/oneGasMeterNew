@@ -46,16 +46,46 @@ public class CompactFrameParser {
         int templateId = Byte.toUnsignedInt(buffer[0]);
 
         return switch (templateId) {
+            case 3  -> parseCF3(buffer);
+            case 8  -> parseCF8(buffer);
             case 47 -> parseCF47(buffer);
             case 48 -> parseCF48(buffer);
             case 49 -> parseCF49(buffer);
-            case 8  -> parseCF8(buffer);
             case 51 -> parseCF51(buffer);
             default -> {
                 log.warn("Template compact frame non supportato: {}", templateId);
                 yield null;
             }
         };
+    }
+
+    /**
+     * CF3 - Diagnostics and Alarms.
+     *
+     * Contiene: batterie (use time, remaining), tempo operativo totale,
+     * contatore tamper comunicazione, dati monitoraggio comunicazione e SLA.
+     */
+    static CompactFrameData parseCF3(byte[] buf) {
+        CompactFrameData data = new CompactFrameData(3);
+        ByteBuffer bb = wrap(buf);
+        bb.get(); // skip template_id
+
+        if (bb.remaining() >= 4) data.put("0.0.96.6.0.255", readUint32(bb));   // Battery Use Time 0
+        if (bb.remaining() >= 4) data.put("0.1.96.6.0.255", readUint32(bb));   // Battery Use Time 1
+        if (bb.remaining() >= 2) data.put("0.0.96.6.6.255", readUint16(bb));   // Battery Remaining 0
+        if (bb.remaining() >= 2) data.put("0.1.96.6.6.255", readUint16(bb));   // Battery Remaining 1
+        if (bb.remaining() >= 4) data.put("0.0.96.8.0.255", readUint32(bb));   // Total Operating Time
+        if (bb.remaining() >= 2) data.put("0.0.96.20.30.255", readUint16(bb)); // Comm Tamper Event Counter
+
+        // Monitoring Communication Data e SLA Data: strutture variabili, salva come byte[]
+        if (bb.remaining() > 0) {
+            byte[] rest = new byte[bb.remaining()];
+            bb.get(rest);
+            data.put("0.0.94.39.56.255", rest); // raw monitoring data
+        }
+
+        log.debug("CF3 parsata: {} campi", data.getValues().size());
+        return data;
     }
 
     /**

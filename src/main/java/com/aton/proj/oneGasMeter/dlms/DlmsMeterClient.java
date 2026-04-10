@@ -191,13 +191,34 @@ public class DlmsMeterClient {
 
     /**
      * Sincronizza l'orologio del contatore con l'ora corrente del server.
+     * Usa il metodo UNIX Time (SET 0-0:1.1.0.255) come da UNI/TS 11291-12-2.
      */
     public void syncClock() {
-        setClock(Instant.now());
+        setUnixTime(Instant.now());
     }
 
     /**
-     * Imposta l'orologio del contatore ad un orario specifico.
+     * Imposta l'orologio del contatore tramite UNIX Time (double-long-unsigned).
+     * Metodo preferito dalla normativa UNI/TS 11291-12-2 per la sincronizzazione.
+     *
+     * @param timestamp orario da impostare
+     */
+    public void setUnixTime(Instant timestamp) {
+        try {
+            GXDLMSData unixTimeObj = new GXDLMSData(CosemObject.UNIX_TIME.getObisCode());
+            unixTimeObj.setValue(timestamp.getEpochSecond());
+
+            byte[][] writeData = gxClient.write(unixTimeObj, 2);
+            readMultiFrame(writeData);
+            log.info("UNIX Time impostato a: {} (epoch: {})", timestamp, timestamp.getEpochSecond());
+        } catch (Exception e) {
+            throw new DlmsCommunicationException("Errore impostazione UNIX Time", e);
+        }
+    }
+
+    /**
+     * Imposta l'orologio del contatore tramite oggetto Clock (Class 8).
+     * Metodo alternativo, utile per impostare data/ora specifica con timezone.
      *
      * @param timestamp orario da impostare
      */
@@ -212,6 +233,59 @@ public class DlmsMeterClient {
             log.info("Orologio impostato a: {}", timestamp);
         } catch (Exception e) {
             throw new DlmsCommunicationException("Errore impostazione orologio", e);
+        }
+    }
+
+    /**
+     * Esegue uno script del Global Script (Class 9, OBIS 0-0:10.0.0.255).
+     * Script rilevanti per UNI/TS 11291-12-2:
+     *   1 = NON CONFIGURATO -> NORMALE
+     *   4 = MANUTENZIONE -> NORMALE
+     *   7 = Reset EOB
+     *   8 = Esecuzione forzata EOB
+     *  22 = Chiusura esplicita connessione PP4
+     *
+     * @param scriptId identificativo dello script da eseguire
+     */
+    public void executeScript(int scriptId) {
+        executeMethod(CosemObject.GLOBAL_SCRIPT.getObisCode(), 9, 1, scriptId, DataType.UINT16);
+        log.info("Script {} eseguito", scriptId);
+    }
+
+    /**
+     * Chiude esplicitamente la connessione PP4 (script 22).
+     * Da invocare prima di disconnect() per segnalare al contatore
+     * che il push e' stato completato con successo (risparmio batteria).
+     */
+    public void closeSession() {
+        try {
+            executeScript(22);
+        } catch (Exception e) {
+            log.debug("Errore chiusura sessione PP4 (ignorato): {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Scrive un attributo di un oggetto COSEM.
+     *
+     * @param obisCode  codice OBIS dell'oggetto
+     * @param classId   Class ID COSEM
+     * @param attrIndex indice dell'attributo
+     * @param value     valore da scrivere
+     * @param dataType  tipo DLMS del valore
+     */
+    public void writeAttribute(String obisCode, int classId, int attrIndex,
+                                Object value, DataType dataType) {
+        try {
+            GXDLMSObject obj = GXDLMSClient.createObject(ObjectType.forValue(classId));
+            obj.setLogicalName(obisCode);
+
+            byte[][] writeData = gxClient.write(obj, attrIndex);
+            readMultiFrame(writeData);
+            log.info("Attributo {} scritto su {} = {}", attrIndex, obisCode, value);
+        } catch (Exception e) {
+            throw new DlmsCommunicationException(
+                    "Errore scrittura " + obisCode + " attr=" + attrIndex, e);
         }
     }
 

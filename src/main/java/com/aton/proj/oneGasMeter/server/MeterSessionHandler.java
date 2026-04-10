@@ -92,12 +92,15 @@ public class MeterSessionHandler {
             // 6. Esegui comandi pendenti
             executePendingCommands(client, serialNumber, sessionId);
 
+            // 7. Chiudi sessione PP4 esplicitamente (script 22) per risparmio batteria
+            client.closeSession();
+
             log.info("[{}] Sessione completata per contatore {}", sessionId, serialNumber);
 
         } catch (Exception e) {
             log.error("[{}] Errore durante la sessione da {}: {}", sessionId, meterIp, e.getMessage(), e);
         } finally {
-            // 6. Disconnetti
+            // 8. Disconnetti
             if (client != null) {
                 client.disconnect();
             } else {
@@ -324,7 +327,7 @@ public class MeterSessionHandler {
                 throw new DlmsCommunicationException("Payload mancante per comando SET_CLOCK");
             }
             Instant timestamp = Instant.parse(payload);
-            client.setClock(timestamp);
+            client.setUnixTime(timestamp);
 
         } else if (type == CommandType.DISCONNECT_VALVE) {
             client.disconnectValve();
@@ -347,6 +350,21 @@ public class MeterSessionHandler {
             log.info("Event log letto: {} righe",
                     profile.getBuffer() != null ? profile.getBuffer().length : 0);
 
+        } else if (type == CommandType.READ_BILLING_DATA) {
+            Date[] range = parseDateRangePayload(command.getPayload());
+            GXDLMSProfileGeneric profile = client.readProfileGeneric(
+                    CosemObject.SNAPSHOT_PERIOD_DATA.getObisCode(), range[0], range[1]);
+            log.info("Billing data letti: {} righe",
+                    profile.getBuffer() != null ? profile.getBuffer().length : 0);
+
+        } else if (type == CommandType.READ_DIAGNOSTICS) {
+            Object cfData = client.readData(CosemObject.CF3_DIAGNOSTICS.getObisCode());
+            log.info("Diagnostica letta: {}", cfData);
+
+        } else if (type == CommandType.READ_VALVE_STATUS) {
+            Object cfData = client.readData(CosemObject.CF8_VALVE_STATUS.getObisCode());
+            log.info("Stato valvola letto: {}", cfData);
+
         } else if (type == CommandType.CHANGE_PUSH_DESTINATION) {
             String payload = command.getPayload();
             if (payload == null || payload.isBlank()) {
@@ -354,6 +372,17 @@ public class MeterSessionHandler {
             }
             String[] parts = parsePushDestinationPayload(payload);
             client.setPushDestination(parts[0], Integer.parseInt(parts[1]));
+
+        } else if (type == CommandType.FORCE_EOB) {
+            client.executeScript(8); // Script 8 = esecuzione forzata EOB
+
+        } else if (type == CommandType.EXECUTE_SCRIPT) {
+            String payload = command.getPayload();
+            if (payload == null || payload.isBlank()) {
+                throw new DlmsCommunicationException("Payload mancante per comando EXECUTE_SCRIPT");
+            }
+            int scriptId = Integer.parseInt(payload.trim());
+            client.executeScript(scriptId);
 
         } else {
             throw new DlmsCommunicationException(
