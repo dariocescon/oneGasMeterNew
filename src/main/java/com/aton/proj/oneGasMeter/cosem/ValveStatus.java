@@ -28,9 +28,10 @@ public class ValveStatus {
     public static ValveStatus fromCompactFrame(CompactFrameData cfData) {
         if (cfData == null || cfData.getTemplateId() != 8) return null;
 
-        Boolean output = cfData.getBoolean("0.0.96.3.10.255#output");
-        Integer control = cfData.getInt("0.0.96.3.10.255#control");
-        Integer cause = cfData.getInt("0.0.94.39.7.255");
+        String valveObis = CosemObject.VALVE_STATE.getObisCode();
+        Boolean output = cfData.getBoolean(valveObis + "#output");
+        Integer control = cfData.getInt(valveObis + "#control");
+        Integer cause = cfData.getInt(CosemObject.VALVE_CLOSURE_CAUSE.getObisCode());
 
         if (output == null || control == null) return null;
         return new ValveStatus(output, control, cause != null ? cause : 0);

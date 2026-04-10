@@ -21,10 +21,26 @@ import java.time.Instant;
  * - boolean:               1 byte (0=false, altrimenti true)
  * - enum:                  1 byte
  * - octet-string:          prefisso lunghezza (1 byte) + dati
+ *
+ * Tutti i codici OBIS usati come chiave nei dati parsati provengono dall'enum CosemObject.
  */
 public class CompactFrameParser {
 
     private static final Logger log = LoggerFactory.getLogger(CompactFrameParser.class);
+
+    // Alias brevi per le costanti OBIS usate frequentemente nei parser
+    private static final String OBIS_UNIX_TIME = CosemObject.UNIX_TIME.getObisCode();
+    private static final String OBIS_PP4_STATUS = CosemObject.PP4_NETWORK_STATUS.getObisCode();
+    private static final String OBIS_VALVE = CosemObject.VALVE_STATE.getObisCode();
+    private static final String OBIS_METRO_EVT_CNT = CosemObject.METROLOGICAL_EVENT_COUNTER.getObisCode();
+    private static final String OBIS_EVT_CNT = CosemObject.EVENT_COUNTER.getObisCode();
+    private static final String OBIS_DAILY_DIAG = CosemObject.DAILY_DIAGNOSTIC.getObisCode();
+    private static final String OBIS_CONV_VOL = CosemObject.CURRENT_INDEX_CONVERTED_VOL.getObisCode();
+    private static final String OBIS_CONV_VOL_ALARM = CosemObject.CURRENT_INDEX_CONV_VOL_ALARM.getObisCode();
+    private static final String OBIS_BILLING_CNT = CosemObject.BILLING_PERIOD_COUNTER.getObisCode();
+    private static final String OBIS_MGMT_FC = CosemObject.MGMT_FRAME_COUNTER_ONLINE.getObisCode();
+    private static final String OBIS_DAILY_PROFILE = CosemObject.DAILY_LOAD_PROFILE.getObisCode();
+    private static final String OBIS_SNAPSHOT = CosemObject.SNAPSHOT_PERIOD_DATA.getObisCode();
 
     private CompactFrameParser() {
         // Utility class
@@ -77,18 +93,18 @@ public class CompactFrameParser {
         ByteBuffer bb = wrap(buf);
         bb.get(); // skip template_id
 
-        if (bb.remaining() >= 4) data.put("0.0.96.6.0.255", readUint32(bb));   // Battery Use Time 0
-        if (bb.remaining() >= 4) data.put("0.1.96.6.0.255", readUint32(bb));   // Battery Use Time 1
-        if (bb.remaining() >= 2) data.put("0.0.96.6.6.255", readUint16(bb));   // Battery Remaining 0
-        if (bb.remaining() >= 2) data.put("0.1.96.6.6.255", readUint16(bb));   // Battery Remaining 1
-        if (bb.remaining() >= 4) data.put("0.0.96.8.0.255", readUint32(bb));   // Total Operating Time
-        if (bb.remaining() >= 2) data.put("0.0.96.20.30.255", readUint16(bb)); // Comm Tamper Event Counter
+        if (bb.remaining() >= 4) data.put(CosemObject.BATTERY_USE_TIME_0.getObisCode(), readUint32(bb));
+        if (bb.remaining() >= 4) data.put(CosemObject.BATTERY_USE_TIME_1.getObisCode(), readUint32(bb));
+        if (bb.remaining() >= 2) data.put(CosemObject.BATTERY_REMAINING_0.getObisCode(), readUint16(bb));
+        if (bb.remaining() >= 2) data.put(CosemObject.BATTERY_REMAINING_1.getObisCode(), readUint16(bb));
+        if (bb.remaining() >= 4) data.put(CosemObject.TOTAL_OPERATING_TIME.getObisCode(), readUint32(bb));
+        if (bb.remaining() >= 2) data.put(CosemObject.COMM_TAMPER_EVENT_COUNTER.getObisCode(), readUint16(bb));
 
         // Monitoring Communication Data e SLA Data: strutture variabili, salva come byte[]
         if (bb.remaining() > 0) {
             byte[] rest = new byte[bb.remaining()];
             bb.get(rest);
-            data.put("0.0.94.39.56.255", rest); // raw monitoring data
+            data.put(CosemObject.MONITORING_COMM_DATA.getObisCode(), rest); // raw monitoring data
         }
 
         log.debug("CF3 parsata: {} campi", data.getValues().size());
@@ -108,27 +124,27 @@ public class CompactFrameParser {
         bb.get(); // skip template_id
 
         // EOB Snapshot Period (long-unsigned, giorni)
-        if (bb.remaining() >= 2) data.put("7.0.0.8.23.255", readUint16(bb));
+        if (bb.remaining() >= 2) data.put(CosemObject.EOB_SNAPSHOT_PERIOD.getObisCode(), readUint16(bb));
 
         // EOB Snapshot Starting Date (date = 5 byte)
         if (bb.remaining() >= 5) {
             byte[] startDate = new byte[5];
             bb.get(startDate);
-            data.put("0.0.94.39.11.255", startDate);
+            data.put(CosemObject.EOB_SNAPSHOT_STARTING_DATE.getObisCode(), startDate);
         }
 
         // Start of Conventional Gas Day (time = 4 byte)
         if (bb.remaining() >= 4) {
             byte[] gasDay = new byte[4];
             bb.get(gasDay);
-            data.put("7.0.0.9.3.255", gasDay);
+            data.put(CosemObject.START_GAS_DAY.getObisCode(), gasDay);
         }
 
         // On Demand Snapshot Time (date-time = 12 byte)
         if (bb.remaining() >= 12) {
             byte[] snapshotTime = new byte[12];
             bb.get(snapshotTime);
-            data.put("0.0.94.39.8.255", snapshotTime);
+            data.put(CosemObject.ON_DEMAND_SNAPSHOT_TIME.getObisCode(), snapshotTime);
         }
 
         // Il resto contiene parametri orologio (variabili), salva come raw
@@ -158,7 +174,7 @@ public class CompactFrameParser {
         if (bb.remaining() > 0) {
             byte[] tariffData = new byte[bb.remaining()];
             bb.get(tariffData);
-            data.put("0.0.94.39.21.255", tariffData);
+            data.put(CosemObject.ACTIVE_TARIFF_PLAN.getObisCode(), tariffData);
         }
 
         log.debug("CF5 parsata: piano tariffario attivo ({} byte)", buf.length - 1);
@@ -178,7 +194,7 @@ public class CompactFrameParser {
         if (bb.remaining() > 0) {
             byte[] tariffData = new byte[bb.remaining()];
             bb.get(tariffData);
-            data.put("0.0.94.39.22.255", tariffData);
+            data.put(CosemObject.PASSIVE_TARIFF_PLAN.getObisCode(), tariffData);
         }
 
         log.debug("CF6 parsata: piano tariffario passivo ({} byte)", buf.length - 1);
@@ -210,8 +226,9 @@ public class CompactFrameParser {
         bb.get(); // skip template_id
 
         // image_transfer_status
+        String fwObis = CosemObject.IMAGE_TRANSFER.getObisCode();
         if (bb.remaining() >= 1) {
-            data.put("0.0.44.0.0.255#status", readUint8(bb));
+            data.put(fwObis + "#status", readUint8(bb));
         }
 
         // image_transferred_blocks_status: length-prefixed bit-string
@@ -220,7 +237,7 @@ public class CompactFrameParser {
             if (len > 0 && bb.remaining() >= len) {
                 byte[] blocks = new byte[len];
                 bb.get(blocks);
-                data.put("0.0.44.0.0.255#blocks", blocks);
+                data.put(fwObis + "#blocks", blocks);
             }
         }
 
@@ -248,10 +265,16 @@ public class CompactFrameParser {
         // La struttura esatta dipende dal contenuto variabile delle execution_time
         // e push_object_list. Salviamo come blocco raw per ogni push.
         String[] pushSchedulerObis = {
-            "0.1.15.0.4.255", "0.2.15.0.4.255", "0.3.15.0.4.255", "0.4.15.0.4.255"
+            CosemObject.PUSH_SCHEDULER_1.getObisCode(),
+            CosemObject.PUSH_SCHEDULER_2.getObisCode(),
+            CosemObject.PUSH_SCHEDULER_3.getObisCode(),
+            CosemObject.PUSH_SCHEDULER_4.getObisCode()
         };
         String[] pushSetupObis = {
-            "0.1.25.9.0.255", "0.2.25.9.0.255", "0.3.25.9.0.255", "0.4.25.9.0.255"
+            CosemObject.PUSH_SETUP_1.getObisCode(),
+            CosemObject.PUSH_SETUP_2.getObisCode(),
+            CosemObject.PUSH_SETUP_3.getObisCode(),
+            CosemObject.PUSH_SETUP_4.getObisCode()
         };
 
         // Ogni push block: scheduler(45 byte) + setup(~68 byte) = ~113 byte
@@ -297,14 +320,14 @@ public class CompactFrameParser {
         ByteBuffer bb = wrap(buf);
         bb.get(); // skip template_id
 
-        if (bb.remaining() >= 2) data.put("0.0.94.39.3.255", readUint16(bb));   // Valve Config PGV
-        if (bb.remaining() >= 1) data.put("0.0.94.39.2.255", readUint8(bb));    // Max Password Attempts
+        if (bb.remaining() >= 2) data.put(CosemObject.VALVE_CONFIG_PGV.getObisCode(), readUint16(bb));            // Valve Config PGV
+        if (bb.remaining() >= 1) data.put(CosemObject.VALVE_MAX_PASSWORD_ATTEMPTS.getObisCode(), readUint8(bb));  // Max Password Attempts
 
         // Days Without Comms Threshold: array of 1 long-unsigned (1 byte count + 2 byte value)
         if (bb.remaining() >= 3) {
             int count = readUint8(bb);
             if (count >= 1 && bb.remaining() >= 2) {
-                data.put("0.0.94.39.5.255", readUint16(bb));
+                data.put(CosemObject.DAYS_WITHOUT_COMMS_THRESHOLD.getObisCode(), readUint16(bb));
             }
         }
 
@@ -312,7 +335,7 @@ public class CompactFrameParser {
         if (bb.remaining() >= 5) {
             int count = readUint8(bb);
             if (count >= 1 && bb.remaining() >= 4) {
-                data.put("0.0.94.39.25.255", readUint32(bb));
+                data.put(CosemObject.TAMPERING_ATTEMPTS_THRESHOLD.getObisCode(), readUint32(bb));
             }
         }
 
@@ -320,7 +343,7 @@ public class CompactFrameParser {
         if (bb.remaining() >= 4) {
             byte[] leakParams = new byte[4];
             bb.get(leakParams);
-            data.put("0.0.94.39.26.255", leakParams);
+            data.put(CosemObject.LEAKAGE_TEST_PARAMS.getObisCode(), leakParams);
         }
 
         log.debug("CF7 parsata: {} campi", data.getValues().size());
@@ -346,24 +369,22 @@ public class CompactFrameParser {
         bb.get(); // skip template_id
 
         // executed_script: structure (octet-string 9 byte + long-unsigned 2 byte) = ~13 byte
+        String schedObis = CosemObject.VALVE_SINGLE_ACTION_SCHEDULE.getObisCode();
         if (bb.remaining() >= 13) {
             byte[] scriptRef = new byte[13];
             bb.get(scriptRef);
-            data.put("0.0.15.0.1.255#script", scriptRef);
+            data.put(schedObis + "#script", scriptRef);
         }
 
         // execution_time: array of 1 (time 4 byte + date 5 byte) = ~12 byte con header
         if (bb.remaining() >= 12) {
             byte[] execTime = new byte[12];
             bb.get(execTime);
-            data.put("0.0.15.0.1.255#time", execTime);
+            data.put(schedObis + "#time", execTime);
         }
 
-        // Valve Enable Password
-        if (bb.remaining() >= 2) data.put("0.0.94.39.1.255", readUint16(bb));
-
-        // Opening Command Duration Validity
-        if (bb.remaining() >= 2) data.put("0.0.94.39.6.255", readUint16(bb));
+        if (bb.remaining() >= 2) data.put(CosemObject.VALVE_ENABLE_PASSWORD.getObisCode(), readUint16(bb));
+        if (bb.remaining() >= 2) data.put(CosemObject.VALVE_OPENING_DURATION.getObisCode(), readUint16(bb));
 
         log.debug("CF9 parsata: {} campi", data.getValues().size());
         return data;
@@ -394,20 +415,20 @@ public class CompactFrameParser {
 
         long unixTime = readUint32(bb);
         data.setTimestamp(Instant.ofEpochSecond(unixTime));
-        data.put("0.0.1.1.0.255", unixTime);
+        data.put(OBIS_UNIX_TIME, unixTime);
 
-        data.put("0.1.96.5.4.255", readUint16(bb));          // PP4 Network Status
-        data.put("0.0.96.3.10.255#output", readBoolean(bb)); // Valve output_state
-        data.put("0.0.96.3.10.255#control", readUint8(bb));  // Valve control_state
-        data.put("0.0.96.15.1.255", readUint16(bb));         // Metrological Event Counter
-        data.put("0.0.96.15.2.255", readUint16(bb));         // Event Counter
-        data.put("7.1.96.5.1.255", readUint16(bb));          // Daily Diagnostic
-        data.put("7.0.13.2.0.255", readUint32(bb));          // Current Index Converted Volume
-        data.put("7.0.12.2.0.255", readUint32(bb));          // Current Index Conv Vol Alarm
-        data.put("7.0.0.1.0.255", readUint8(bb));            // Billing Period Counter
+        data.put(OBIS_PP4_STATUS, readUint16(bb));           // PP4 Network Status            
+        data.put(OBIS_VALVE + "#output", readBoolean(bb));   // Valve output_state            
+        data.put(OBIS_VALVE + "#control", readUint8(bb));    // Valve control_state           
+        data.put(OBIS_METRO_EVT_CNT, readUint16(bb));        // Metrological Event Counter    
+        data.put(OBIS_EVT_CNT, readUint16(bb));              // Event Counter                 
+        data.put(OBIS_DAILY_DIAG, readUint16(bb));           // Daily Diagnostic              
+        data.put(OBIS_CONV_VOL, readUint32(bb));             // Current Index Converted Volume
+        data.put(OBIS_CONV_VOL_ALARM, readUint32(bb));       // Current Index Conv Vol Alarm  
+        data.put(OBIS_BILLING_CNT, readUint8(bb));           // Billing Period Counter        
 
         if (bb.remaining() >= 4) {
-            data.put("0.0.43.1.1.255", readUint32(bb));      // Mgmt Frame Counter Online
+            data.put(OBIS_MGMT_FC, readUint32(bb));          // Mgmt Frame Counter Online
         }
         // Spare object: ignora il resto
 
@@ -429,28 +450,28 @@ public class CompactFrameParser {
         // Stessi campi di CF47
         long unixTime = readUint32(bb);
         data.setTimestamp(Instant.ofEpochSecond(unixTime));
-        data.put("0.0.1.1.0.255", unixTime);
+        data.put(OBIS_UNIX_TIME, unixTime);
 
-        data.put("0.1.96.5.4.255", readUint16(bb));
-        data.put("0.0.96.3.10.255#output", readBoolean(bb));
-        data.put("0.0.96.3.10.255#control", readUint8(bb));
-        data.put("0.0.96.15.1.255", readUint16(bb));
-        data.put("0.0.96.15.2.255", readUint16(bb));
-        data.put("7.1.96.5.1.255", readUint16(bb));
-        data.put("7.0.13.2.0.255", readUint32(bb));
-        data.put("7.0.12.2.0.255", readUint32(bb));
+        data.put(OBIS_PP4_STATUS, readUint16(bb));
+        data.put(OBIS_VALVE + "#output", readBoolean(bb));
+        data.put(OBIS_VALVE + "#control", readUint8(bb));
+        data.put(OBIS_METRO_EVT_CNT, readUint16(bb));
+        data.put(OBIS_EVT_CNT, readUint16(bb));
+        data.put(OBIS_DAILY_DIAG, readUint16(bb));
+        data.put(OBIS_CONV_VOL, readUint32(bb));
+        data.put(OBIS_CONV_VOL_ALARM, readUint32(bb));
 
         // Daily Load Profile (ultimi 3 entries) - salva come byte[] grezzo
         if (bb.remaining() >= 43) {
             byte[] dailyProfile = new byte[43];
             bb.get(dailyProfile);
-            data.put("7.0.99.99.3.255", dailyProfile);
+            data.put(OBIS_DAILY_PROFILE, dailyProfile);
         }
 
-        data.put("7.0.0.1.0.255", readUint8Safe(bb));
+        data.put(OBIS_BILLING_CNT, readUint8Safe(bb));
 
         if (bb.remaining() >= 4) {
-            data.put("0.0.43.1.1.255", readUint32(bb));
+            data.put(OBIS_MGMT_FC, readUint32(bb));
         }
 
         log.debug("CF48 parsata: {} campi, timestamp={}", data.getValues().size(), data.getTimestamp());
@@ -470,35 +491,35 @@ public class CompactFrameParser {
         // Stessi campi di CF47/48
         long unixTime = readUint32(bb);
         data.setTimestamp(Instant.ofEpochSecond(unixTime));
-        data.put("0.0.1.1.0.255", unixTime);
+        data.put(OBIS_UNIX_TIME, unixTime);
 
-        data.put("0.1.96.5.4.255", readUint16(bb));
-        data.put("0.0.96.3.10.255#output", readBoolean(bb));
-        data.put("0.0.96.3.10.255#control", readUint8(bb));
-        data.put("0.0.96.15.1.255", readUint16(bb));
-        data.put("0.0.96.15.2.255", readUint16(bb));
-        data.put("7.1.96.5.1.255", readUint16(bb));
-        data.put("7.0.13.2.0.255", readUint32(bb));
-        data.put("7.0.12.2.0.255", readUint32(bb));
+        data.put(OBIS_PP4_STATUS, readUint16(bb));
+        data.put(OBIS_VALVE + "#output", readBoolean(bb));
+        data.put(OBIS_VALVE + "#control", readUint8(bb));
+        data.put(OBIS_METRO_EVT_CNT, readUint16(bb));
+        data.put(OBIS_EVT_CNT, readUint16(bb));
+        data.put(OBIS_DAILY_DIAG, readUint16(bb));
+        data.put(OBIS_CONV_VOL, readUint32(bb));
+        data.put(OBIS_CONV_VOL_ALARM, readUint32(bb));
 
         // Daily Load Profile (ultimi 3 entries)
         if (bb.remaining() >= 43) {
             byte[] dailyProfile = new byte[43];
             bb.get(dailyProfile);
-            data.put("7.0.99.99.3.255", dailyProfile);
+            data.put(OBIS_DAILY_PROFILE, dailyProfile);
         }
 
-        data.put("7.0.0.1.0.255", readUint8Safe(bb));
+        data.put(OBIS_BILLING_CNT, readUint8Safe(bb));
 
         // Snapshot Period Data (ultimo entry)
         if (bb.remaining() >= 51) {
             byte[] snapshotData = new byte[51];
             bb.get(snapshotData);
-            data.put("7.0.98.11.0.255", snapshotData);
+            data.put(OBIS_SNAPSHOT, snapshotData);
         }
 
         if (bb.remaining() >= 4) {
-            data.put("0.0.43.1.1.255", readUint32(bb));
+            data.put(OBIS_MGMT_FC, readUint32(bb));
         }
 
         log.debug("CF49 parsata: {} campi, timestamp={}", data.getValues().size(), data.getTimestamp());
@@ -520,9 +541,9 @@ public class CompactFrameParser {
         ByteBuffer bb = wrap(buf);
         bb.get(); // skip template_id
 
-        data.put("0.0.96.3.10.255#output", readBoolean(bb));
-        data.put("0.0.96.3.10.255#control", readUint8(bb));
-        data.put("0.0.94.39.7.255", readUint8(bb));
+        data.put(OBIS_VALVE + "#output", readBoolean(bb));
+        data.put(OBIS_VALVE + "#control", readUint8(bb));
+        data.put(CosemObject.VALVE_CLOSURE_CAUSE.getObisCode(), readUint8(bb));
 
         log.debug("CF8 parsata: {} campi", data.getValues().size());
         return data;
@@ -550,14 +571,14 @@ public class CompactFrameParser {
             if (bb.remaining() >= len) {
                 byte[] ldnBytes = new byte[len];
                 bb.get(ldnBytes);
-                data.put("0.0.42.0.0.255", new String(ldnBytes));
+                data.put(CosemObject.LOGICAL_DEVICE_NAME.getObisCode(), new String(ldnBytes));
             }
         }
 
-        if (bb.remaining() >= 4) data.put("0.0.43.1.1.255", readUint32(bb));
-        if (bb.remaining() >= 4) data.put("0.1.43.1.1.255", readUint32(bb));
-        if (bb.remaining() >= 4) data.put("0.0.43.1.48.255", readUint32(bb));
-        if (bb.remaining() >= 4) data.put("0.0.43.1.3.255", readUint32(bb));
+        if (bb.remaining() >= 4) data.put(CosemObject.MGMT_FRAME_COUNTER_ONLINE.getObisCode(), readUint32(bb));
+        if (bb.remaining() >= 4) data.put(CosemObject.MGMT_FRAME_COUNTER_OFFLINE.getObisCode(), readUint32(bb));
+        if (bb.remaining() >= 4) data.put(CosemObject.GA_FRAME_COUNTER.getObisCode(), readUint32(bb));
+        if (bb.remaining() >= 4) data.put(CosemObject.IM_FRAME_COUNTER.getObisCode(), readUint32(bb));
 
         log.debug("CF51 parsata: {} campi", data.getValues().size());
         return data;

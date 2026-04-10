@@ -10,8 +10,12 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Test unitari per CompactFrameParser.
+ * Tutti i codici OBIS usati per le asserzioni provengono dall'enum CosemObject.
  */
 class CompactFrameParserTest {
+
+    // Alias per le costanti OBIS usate nelle asserzioni
+    private static final String VALVE_OBIS = CosemObject.VALVE_STATE.getObisCode();
 
     @Test
     void parseCF47Basic() {
@@ -23,17 +27,17 @@ class CompactFrameParserTest {
         assertNotNull(data);
         assertEquals(47, data.getTemplateId());
         assertEquals(Instant.ofEpochSecond(1700000000L), data.getTimestamp());
-        assertEquals(1700000000L, data.getLong("0.0.1.1.0.255"));       // UNIX time
-        assertEquals(1, data.getInt("0.1.96.5.4.255"));                 // PP4 Network Status
-        assertEquals(true, data.getBoolean("0.0.96.3.10.255#output"));  // Valve output
-        assertEquals(2, data.getInt("0.0.96.3.10.255#control"));        // Valve control
-        assertEquals(10, data.getInt("0.0.96.15.1.255"));               // Metro Event Cnt
-        assertEquals(20, data.getInt("0.0.96.15.2.255"));               // Event Counter
-        assertEquals(0x1234, data.getInt("7.1.96.5.1.255"));            // Daily Diagnostic
-        assertEquals(500000L, data.getLong("7.0.13.2.0.255"));          // Conv Volume
-        assertEquals(100L, data.getLong("7.0.12.2.0.255"));             // Conv Vol Alarm
-        assertEquals(5, data.getInt("7.0.0.1.0.255"));                  // Billing Counter
-        assertEquals(42L, data.getLong("0.0.43.1.1.255"));              // Mgmt FC Online
+        assertEquals(1700000000L, data.getLong(CosemObject.UNIX_TIME.getObisCode()));                  // UNIX time         
+        assertEquals(1, data.getInt(CosemObject.PP4_NETWORK_STATUS.getObisCode()));                    // PP4 Network Status
+        assertEquals(true, data.getBoolean(VALVE_OBIS + "#output"));                                   // Valve output      
+        assertEquals(2, data.getInt(VALVE_OBIS + "#control"));                                         // Valve control     
+        assertEquals(10, data.getInt(CosemObject.METROLOGICAL_EVENT_COUNTER.getObisCode()));           // Metro Event Cnt   
+        assertEquals(20, data.getInt(CosemObject.EVENT_COUNTER.getObisCode()));                        // Event Counter     
+        assertEquals(0x1234, data.getInt(CosemObject.DAILY_DIAGNOSTIC.getObisCode()));                 // Daily Diagnostic  
+        assertEquals(500000L, data.getLong(CosemObject.CURRENT_INDEX_CONVERTED_VOL.getObisCode()));    // Conv Volume       
+        assertEquals(100L, data.getLong(CosemObject.CURRENT_INDEX_CONV_VOL_ALARM.getObisCode()));      // Conv Vol Alarm    
+        assertEquals(5, data.getInt(CosemObject.BILLING_PERIOD_COUNTER.getObisCode()));                // Billing Counter   
+        assertEquals(42L, data.getLong(CosemObject.MGMT_FRAME_COUNTER_ONLINE.getObisCode()));          // Mgmt FC Online    
     }
 
     @Test
@@ -66,9 +70,9 @@ class CompactFrameParserTest {
 
         assertNotNull(data);
         assertEquals(8, data.getTemplateId());
-        assertEquals(true, data.getBoolean("0.0.96.3.10.255#output"));
-        assertEquals(3, data.getInt("0.0.96.3.10.255#control"));
-        assertEquals(7, data.getInt("0.0.94.39.7.255"));
+        assertEquals(true, data.getBoolean(VALVE_OBIS + "#output"));
+        assertEquals(3, data.getInt(VALVE_OBIS + "#control"));
+        assertEquals(7, data.getInt(CosemObject.VALVE_CLOSURE_CAUSE.getObisCode()));
     }
 
     @Test
@@ -112,10 +116,10 @@ class CompactFrameParserTest {
 
         assertNotNull(data);
         assertEquals(7, data.getTemplateId());
-        assertEquals(1234, data.getInt("0.0.94.39.3.255"));  // PGV
-        assertEquals(5, data.getInt("0.0.94.39.2.255"));     // Max Password
-        assertEquals(30, data.getInt("0.0.94.39.5.255"));    // Days Without Comms
-        assertEquals(100L, data.getLong("0.0.94.39.25.255")); // Tampering Threshold
+        assertEquals(1234, data.getInt(CosemObject.VALVE_CONFIG_PGV.getObisCode()));               // PGV                
+        assertEquals(5, data.getInt(CosemObject.VALVE_MAX_PASSWORD_ATTEMPTS.getObisCode()));       // Max Password       
+        assertEquals(30, data.getInt(CosemObject.DAYS_WITHOUT_COMMS_THRESHOLD.getObisCode()));     // Days Without Comms 
+        assertEquals(100L, data.getLong(CosemObject.TAMPERING_ATTEMPTS_THRESHOLD.getObisCode()));  // Tampering Threshold
     }
 
     @Test
@@ -131,8 +135,8 @@ class CompactFrameParserTest {
 
         assertNotNull(data);
         assertEquals(9, data.getTemplateId());
-        assertEquals(9999, data.getInt("0.0.94.39.1.255"));  // Password
-        assertEquals(120, data.getInt("0.0.94.39.6.255"));   // Duration
+        assertEquals(9999, data.getInt(CosemObject.VALVE_ENABLE_PASSWORD.getObisCode()));
+        assertEquals(120, data.getInt(CosemObject.VALVE_OPENING_DURATION.getObisCode()));
     }
 
     @Test
@@ -148,7 +152,7 @@ class CompactFrameParserTest {
 
         assertNotNull(data);
         assertEquals(4, data.getTemplateId());
-        assertEquals(30, data.getInt("7.0.0.8.23.255"));
+        assertEquals(30, data.getInt(CosemObject.EOB_SNAPSHOT_PERIOD.getObisCode()));
     }
 
     @Test
@@ -161,7 +165,7 @@ class CompactFrameParserTest {
 
         assertNotNull(data);
         assertEquals(5, data.getTemplateId());
-        assertNotNull(data.get("0.0.94.39.21.255"));
+        assertNotNull(data.get(CosemObject.ACTIVE_TARIFF_PLAN.getObisCode()));
     }
 
     @Test
@@ -173,7 +177,7 @@ class CompactFrameParserTest {
 
         assertNotNull(data);
         assertEquals(6, data.getTemplateId());
-        assertNotNull(data.get("0.0.94.39.22.255"));
+        assertNotNull(data.get(CosemObject.PASSIVE_TARIFF_PLAN.getObisCode()));
     }
 
     @Test
@@ -207,8 +211,9 @@ class CompactFrameParserTest {
 
         assertNotNull(data);
         assertEquals(22, data.getTemplateId());
-        assertEquals(3, data.getInt("0.0.44.0.0.255#status")); // verification_successful
-        assertNotNull(data.get("0.0.44.0.0.255#blocks"));
+        String fwObis = CosemObject.IMAGE_TRANSFER.getObisCode(); // verification_successful
+        assertEquals(3, data.getInt(fwObis + "#status"));
+        assertNotNull(data.get(fwObis + "#blocks"));
     }
 
     // === Utility per costruire buffer di test ===
