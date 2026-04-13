@@ -224,7 +224,7 @@ public class UdpServer implements CommandLineRunner {
                     byte[] result = findOctetString(apdu, pos);
                     if (result != null) return result;
                     int next = skipDataElement(apdu, pos);
-                    if (next <= pos) break; // sicurezza: nessun progresso
+                    if (next <= pos || next >= apdu.length) break; // sicurezza: nessun progresso o fine buffer
                     pos = next;
                 }
                 return null;
@@ -237,7 +237,7 @@ public class UdpServer implements CommandLineRunner {
                     byte[] result = findOctetString(apdu, pos);
                     if (result != null) return result;
                     int next = skipDataElement(apdu, pos);
-                    if (next <= pos) break;
+                    if (next <= pos || next >= apdu.length) break;
                     pos = next;
                 }
                 return null;
@@ -295,7 +295,7 @@ public class UdpServer implements CommandLineRunner {
                 int pos = offset + 1;
                 for (int i = 0; i < count; i++) {
                     int next = skipDataElement(apdu, pos);
-                    if (next <= pos) return pos;
+                    if (next <= pos || next >= apdu.length) return apdu.length;
                     pos = next;
                 }
                 return pos;
@@ -306,13 +306,13 @@ public class UdpServer implements CommandLineRunner {
                 int pos = offset + 2;
                 for (int i = 0; i < count; i++) {
                     int next = skipDataElement(apdu, pos);
-                    if (next <= pos) return pos;
+                    if (next <= pos || next >= apdu.length) return apdu.length;
                     pos = next;
                 }
                 return pos;
             }
             default:
-                return offset; // tag sconosciuto: stop
+                return apdu.length; // tag sconosciuto: segnala impossibilita' di avanzare
         }
     }
 

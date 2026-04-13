@@ -43,13 +43,7 @@ class UdpServerTest {
      * Il compact frame e' racchiuso in una struttura (0x02) con 1 elemento.
      */
     private byte[] buildDataNotification(byte[] compactFrameBuffer) {
-        // Struttura notification-body: 0x02 0x01 <octet-string>
-        byte[] body = new byte[3 + compactFrameBuffer.length];
-        body[0] = 0x02;                             // structure
-        body[1] = 0x01;                             // 1 elemento
-        body[2] = 0x09;                             // octet-string tag
-        // Attenzione: lunghezza su 1 byte (max 255)
-        byte[] apdu = new byte[1 + 4 + 2 + 3 + compactFrameBuffer.length];
+        byte[] apdu = new byte[1 + 4 + 1 + 1 + 1 + 1 + 1 + compactFrameBuffer.length];
         int i = 0;
         apdu[i++] = 0x0F;                           // DATA-NOTIFICATION tag
         apdu[i++] = 0x40; apdu[i++] = 0x00; apdu[i++] = 0x00; apdu[i++] = 0x01; // invoke-id
