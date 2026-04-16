@@ -1,9 +1,13 @@
 package com.aton.proj.oneGasMeter.server;
 
+import com.aton.proj.oneGasMeter.config.DlmsSessionConfig;
 import com.aton.proj.oneGasMeter.config.UdpServerConfig;
 import com.aton.proj.oneGasMeter.cosem.CompactFrameData;
 import com.aton.proj.oneGasMeter.cosem.CompactFrameParser;
+import com.aton.proj.oneGasMeter.dlms.UdpReassemblyContext;
 import com.aton.proj.oneGasMeter.service.TelemetryService;
+import gurux.dlms.GXReplyData;
+import gurux.dlms.enums.Command;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,382 +20,290 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.time.Instant;
-import java.util.Arrays;
-import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
- * Server UDP che riceve pacchetti DLMS/COSEM dai contatori gas.
+ * Server UDP che riceve DATA-NOTIFICATION dai contatori gas via DLMS/COSEM
+ * WRAPPER.
  *
- * I contatori gas possono inviare DATA-NOTIFICATION via UDP (connection-less).
- * In caso di fallimento nell'invio della risposta, il server ritenta
- * fino a retryCount volte con retryDelayMs di attesa tra i tentativi.
+ * <h3>Segmentazione GBT (General Block Transfer)</h3> Un contatore può
+ * suddividere una DATA-NOTIFICATION in più datagram UDP usando GBT. La chiave
+ * di riassemblaggio è "ip:porta" del mittente: Gurux
+ * ({@link gurux.dlms.GXDLMSClient}) accumula i blocchi nella stessa istanza di
+ * {@link GXReplyData} fino al completamento. Dopo ogni blocco intermedio il
+ * server invia un ACK GBT; quando il messaggio è completo lo processa.
  *
- * Il protocollo DLMS WRAPPER e' lo stesso usato su TCP: header di 8 byte
- * (version, source wPort, dest wPort, length) seguito dal payload APDU.
+ * <h3>Flusso per messaggio singolo (no GBT)</h3>
+ * 
+ * <pre>
+ *   Meter → [WRAPPER | DATA-NOTIFICATION] → Server
+ *   Server: getData() → CompactFrameParser → TelemetryService.save()
+ * </pre>
+ *
+ * <h3>Flusso GBT (messaggio segmentato)</h3>
+ * 
+ * <pre>
+ *   Meter  → [WRAPPER | GBT block-1] → Server
+ *   Server → [WRAPPER | GBT ACK-1  ] → Meter
+ *   Meter  → [WRAPPER | GBT block-2] → Server  (last-block flag)
+ *   Server: riassembla → CompactFrameParser → TelemetryService.save()
+ * </pre>
+ *
+ * <h3>Identificativo dispositivo</h3> Via UDP non esiste handshake AARQ/AARE:
+ * il serial number non è noto a priori. Il campo {@code serial_number} in
+ * {@code telemetry_data} è valorizzato con l'IP sorgente del contatore.
  */
 @Component
 @Order(2)
 public class UdpServer implements CommandLineRunner {
 
-    private static final Logger log = LoggerFactory.getLogger(UdpServer.class);
+	private static final Logger log = LoggerFactory.getLogger(UdpServer.class);
 
-    private static final int WRAPPER_HEADER_SIZE = 8;
-    private static final int WRAPPER_VERSION = 0x0001;
-    private static final int DATA_NOTIFICATION_TAG = 0x0F;
+	private final UdpServerConfig config;
+	private final DlmsSessionConfig dlmsConfig;
+	private final TelemetryService telemetryService;
 
-    private final UdpServerConfig config;
-    private final TelemetryService telemetryService;
-    private DatagramSocket socket;
-    private ExecutorService executor;
-    private volatile boolean running = false;
+	/** Un contesto per ogni peer attivo (ip:porta). Accesso thread-safe. */
+	private final ConcurrentHashMap<String, UdpReassemblyContext> sessions = new ConcurrentHashMap<>();
 
-    public UdpServer(UdpServerConfig config, TelemetryService telemetryService) {
-        this.config = config;
-        this.telemetryService = telemetryService;
-    }
+	private DatagramSocket socket;
+	private ExecutorService executor;
+	private ScheduledExecutorService cleaner;
+	private volatile boolean running = false;
 
-    @Override
-    public void run(String... args) throws Exception {
-        if (config.getPort() == 0) {
-            log.info("Server UDP disabilitato (porta=0)");
-            return;
-        }
+	public UdpServer(UdpServerConfig config, DlmsSessionConfig dlmsConfig, TelemetryService telemetryService) {
+		this.config = config;
+		this.dlmsConfig = dlmsConfig;
+		this.telemetryService = telemetryService;
+	}
 
-        socket = new DatagramSocket(config.getPort());
-        executor = Executors.newVirtualThreadPerTaskExecutor();
-        running = true;
+	@Override
+	public void run(String... args) throws Exception {
+		if (config.getPort() == 0) {
+			log.info("Server UDP disabilitato (porta=0)");
+			return;
+		}
 
-        log.info("Server UDP in ascolto sulla porta {} (max pacchetto: {} byte, retry: {}x{}ms)",
-                config.getPort(), config.getMaxPacketSize(), config.getRetryCount(), config.getRetryDelayMs());
+		socket = new DatagramSocket(config.getPort());
+		executor = Executors.newVirtualThreadPerTaskExecutor();
+		running = true;
 
-        // Loop di ricezione pacchetti
-        while (running) {
-            try {
-                byte[] buffer = new byte[config.getMaxPacketSize()];
-                DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
-                socket.receive(packet);
+		// Pulizia periodica delle sessioni GBT stantie (ogni 60 secondi)
+		cleaner = Executors.newSingleThreadScheduledExecutor(Thread.ofVirtual().name("udp-cleaner").factory());
+		cleaner.scheduleAtFixedRate(this::cleanStaleSessions, 60, 60, TimeUnit.SECONDS);
 
-                // Copia i dati ricevuti (il buffer verra' riusato)
-                byte[] data = new byte[packet.getLength()];
-                System.arraycopy(packet.getData(), packet.getOffset(), data, 0, packet.getLength());
-                InetAddress senderAddress = packet.getAddress();
-                int senderPort = packet.getPort();
+		log.info("Server UDP in ascolto sulla porta {} (max pacchetto: {} byte, retry: {}x{}ms, sessionTimeout: {}ms)",
+				config.getPort(), config.getMaxPacketSize(), config.getRetryCount(), config.getRetryDelayMs(),
+				config.getSessionTimeoutMs());
 
-                log.info("Pacchetto UDP ricevuto da {}:{} ({} byte)",
-                        senderAddress.getHostAddress(), senderPort, data.length);
+		// Loop di ricezione pacchetti
+		while (running) {
+			try {
+				byte[] buffer = new byte[config.getMaxPacketSize()];
+				DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+				socket.receive(packet);
 
-                executor.submit(() -> handlePacket(data, senderAddress, senderPort));
+				// Copia i dati ricevuti prima di riusare il buffer
+				byte[] data = new byte[packet.getLength()];
+				System.arraycopy(packet.getData(), packet.getOffset(), data, 0, packet.getLength());
+				InetAddress senderAddress = packet.getAddress();
+				int senderPort = packet.getPort();
 
-            } catch (IOException e) {
-                if (running) {
-                    log.error("Errore ricezione pacchetto UDP: {}", e.getMessage());
-                }
-            }
-        }
-    }
+				log.debug("Pacchetto UDP ricevuto da {}:{} ({} byte)", senderAddress.getHostAddress(), senderPort,
+						data.length);
 
-    /**
-     * Gestisce un singolo pacchetto UDP ricevuto.
-     * Valida l'header DLMS WRAPPER, individua il tipo APDU e delega
-     * l'elaborazione al metodo appropriato.
-     */
-    private void handlePacket(byte[] data, InetAddress senderAddress, int senderPort) {
-        String senderIp = senderAddress.getHostAddress();
-        try {
-            if (data.length < WRAPPER_HEADER_SIZE) {
-                log.warn("Pacchetto UDP troppo corto da {}:{}: {} byte", senderIp, senderPort, data.length);
-                return;
-            }
+				executor.submit(() -> handlePacket(data, senderAddress, senderPort));
 
-            // Valida versione WRAPPER
-            int version = ((data[0] & 0xFF) << 8) | (data[1] & 0xFF);
-            if (version != WRAPPER_VERSION) {
-                log.warn("Versione WRAPPER non valida da {}:{}: 0x{}", senderIp, senderPort,
-                        Integer.toHexString(version));
-                return;
-            }
+			} catch (IOException e) {
+				if (running) {
+					log.error("Errore ricezione pacchetto UDP: {}", e.getMessage());
+				}
+			}
+		}
+	}
 
-            // Estrai lunghezza payload dai byte 6-7
-            int payloadLength = ((data[6] & 0xFF) << 8) | (data[7] & 0xFF);
-            if (data.length < WRAPPER_HEADER_SIZE + payloadLength) {
-                log.warn("Pacchetto UDP incompleto da {}:{}: attesi {} byte, ricevuti {}",
-                        senderIp, senderPort, WRAPPER_HEADER_SIZE + payloadLength, data.length);
-                return;
-            }
+	/**
+	 * Gestisce un singolo pacchetto UDP ricevuto.
+	 *
+	 * <p>
+	 * Delega a Gurux il parsing del WRAPPER e la gestione del GBT. Se il messaggio
+	 * è frammentato ({@code isMoreData()}), invia l'ACK GBT e attende il blocco
+	 * successivo. Quando il messaggio è completo lo processa.
+	 */
+	private void handlePacket(byte[] data, InetAddress senderAddress, int senderPort) {
+		String senderIp = senderAddress.getHostAddress();
+		String peerKey = senderIp + ":" + senderPort;
 
-            // Estrai APDU (payload)
-            byte[] apdu = Arrays.copyOfRange(data, WRAPPER_HEADER_SIZE, WRAPPER_HEADER_SIZE + payloadLength);
+		// GBT è sequenziale per protocollo: il contatore attende l'ACK prima di inviare
+		// il blocco successivo, quindi non arriveranno mai due pacchetti dallo stesso
+		// peer
+		// contemporaneamente. Non serve sincronizzazione esplicita.
+		UdpReassemblyContext ctx = sessions.computeIfAbsent(peerKey, k -> new UdpReassemblyContext(dlmsConfig));
+		ctx.lastActivity = Instant.now();
 
-            int tag = apdu[0] & 0xFF;
-            if (tag == DATA_NOTIFICATION_TAG) {
-                processDataNotification(apdu, senderIp);
-            } else {
-                log.debug("Tag APDU non gestito da {}:{}: 0x{}", senderIp, senderPort,
-                        Integer.toHexString(tag));
-            }
+		try {
+			// Gurux parsa l'header WRAPPER (8 byte) e accumula i dati nel reply.
+			// Se il frame è GBT, aggiorna reply.blockNumber e reply.moreData internamente.
+			ctx.client.getData(data, ctx.reply);
 
-        } catch (Exception e) {
-            log.error("Errore elaborazione pacchetto UDP da {}:{}: {}", senderIp, senderPort, e.getMessage(), e);
-        }
-    }
+		} catch (Exception e) {
+			log.error("Errore parsing WRAPPER da {}:{}: {}", senderIp, senderPort, e.getMessage());
+			sessions.remove(peerKey);
+			return;
+		}
 
-    /**
-     * Elabora un APDU DATA-NOTIFICATION (tag 0x0F).
-     *
-     * Struttura DATA-NOTIFICATION:
-     *   [0]    tag = 0x0F
-     *   [1-4]  long-invoke-id-and-priority
-     *   [5]    lunghezza date-time (0 se assente)
-     *   [5+1..5+1+len-1] date-time (se presente)
-     *   [...]  notification-body (Data)
-     */
-    private void processDataNotification(byte[] apdu, String senderIp) {
-        if (apdu.length < 6) {
-            log.warn("DATA-NOTIFICATION troppo corta da {}: {} byte", senderIp, apdu.length);
-            return;
-        }
+		if (ctx.reply.isMoreData()) {
+			// Messaggio GBT incompleto: invia ACK per sbloccare il prossimo blocco.
+			// receiverReady() genera il frame WRAPPER con il GBT-acknowledgment.
+			log.debug("GBT blocco {} ricevuto da {}, invio ACK", ctx.reply.getBlockNumber(), peerKey);
+			try {
+				byte[] ack = ctx.client.receiverReady(ctx.reply);
+				if (ack != null && ack.length > 0) {
+					sendWithRetry(ack, senderAddress, senderPort);
+				}
+			} catch (Exception e) {
+				log.error("Errore generazione ACK GBT per {}: {}", peerKey, e.getMessage());
+				sessions.remove(peerKey);
+			}
+			return; // aspetta il blocco successivo
+		}
 
-        // Salta tag (1) + invoke-id-and-priority (4)
-        int offset = 5;
+		// Messaggio completo: rimuovi il contesto e processa
+		sessions.remove(peerKey);
 
-        // Salta date-time (octet-string con lunghezza prefissata)
-        int dtLength = apdu[offset] & 0xFF;
-        offset += 1 + dtLength;
+		int command = ctx.reply.getCommand();
+		if (command == Command.DATA_NOTIFICATION) {
+			processNotification(ctx.reply, senderIp, peerKey);
+		} else {
+			log.warn("Comando UDP non gestito (0x{}) da {}", Integer.toHexString(command), peerKey);
+		}
+	}
 
-        if (offset >= apdu.length) {
-            log.debug("DATA-NOTIFICATION senza corpo da {}", senderIp);
-            return;
-        }
+	/**
+	 * Processa una DATA-NOTIFICATION completa (eventualmente riassemblata da GBT).
+	 *
+	 * <p>
+	 * Il valore contenuto nella notifica è atteso come {@code byte[]}
+	 * rappresentante una compact frame DLMS (Class 62). Viene parsata da
+	 * {@link CompactFrameParser} e ogni campo salvato in {@code telemetry_data}.
+	 *
+	 * @param reply    reply Gurux con il messaggio completo
+	 * @param senderIp IP del contatore (usato come identificativo in assenza di
+	 *                 serial number)
+	 * @param peerKey  "ip:porta" per i log
+	 */
+	private void processNotification(GXReplyData reply, String senderIp, String peerKey) {
+		Object value = reply.getValue();
 
-        // Il resto e' il notification-body (Data): cerca il compact frame buffer
-        byte[] compactBuffer = findOctetString(apdu, offset);
-        if (compactBuffer == null) {
-            log.debug("Nessun compact frame buffer nel pacchetto UDP da {}", senderIp);
-            return;
-        }
+		if (!(value instanceof byte[] rawBytes)) {
+			log.warn("DATA-NOTIFICATION da {} contiene valore non byte[] ({}): ignorato", peerKey,
+					value == null ? "null" : value.getClass().getSimpleName());
+			return;
+		}
 
-        CompactFrameData cfData = CompactFrameParser.parse(compactBuffer);
-        if (cfData == null) {
-            log.debug("Compact frame non parsabile da {}", senderIp);
-            return;
-        }
+		CompactFrameData cfData;
+		try {
+			cfData = CompactFrameParser.parse(rawBytes);
+		} catch (Exception e) {
+			log.error("Errore parsing compact frame da {}: {}", peerKey, e.getMessage());
+			return;
+		}
 
-        String sessionId = UUID.randomUUID().toString();
-        saveCompactFrameData(cfData, senderIp, senderIp, sessionId);
-        log.info("DATA-NOTIFICATION UDP da {}: CF{} elaborata ({} campi)",
-                senderIp, cfData.getTemplateId(), cfData.getValues().size());
-    }
+		if (cfData == null) {
+			log.warn("Compact frame non riconosciuta da {} ({} byte raw)", peerKey, rawBytes.length);
+			return;
+		}
 
-    /**
-     * Naviga ricorsivamente la struttura DLMS Data cercando il primo octet-string
-     * il cui primo byte corrisponde a un template ID di compact frame supportato.
-     *
-     * Tipi DLMS gestiti:
-     *   0x01 = array, 0x02 = structure, 0x09 = octet-string
-     *
-     * @param apdu   buffer contenente l'APDU o una sua sottosequenza
-     * @param offset posizione di partenza della ricerca
-     * @return byte[] del compact frame buffer, oppure null se non trovato
-     */
-    private byte[] findOctetString(byte[] apdu, int offset) {
-        if (offset >= apdu.length) {
-            return null;
-        }
+		Instant timestamp = cfData.getTimestamp() != null ? cfData.getTimestamp() : Instant.now();
+		String sessionId = "udp-" + peerKey;
+		int savedCount = 0;
 
-        int tag = apdu[offset] & 0xFF;
-        offset++;
+		for (var entry : cfData.getValues().entrySet()) {
+			// Salta payload binari grezzi (profili, snapshot): troppo grandi per raw_value
+			if (entry.getValue() instanceof byte[]) {
+				continue;
+			}
+			telemetryService.save(senderIp, senderIp, sessionId, entry.getKey(), 62, entry.getValue(), 0, null,
+					timestamp);
+			savedCount++;
+		}
 
-        switch (tag) {
-            case 0x09: { // octet-string: lunghezza (1 byte) + dati
-                if (offset >= apdu.length) return null;
-                int len = apdu[offset] & 0xFF;
-                offset++;
-                if (len >= 2 && offset + len <= apdu.length) {
-                    int templateId = apdu[offset] & 0xFF;
-                    if (isKnownTemplate(templateId)) {
-                        return Arrays.copyOfRange(apdu, offset, offset + len);
-                    }
-                }
-                return null;
-            }
-            case 0x02: { // structure: contatore (1 byte) + elementi
-                if (offset >= apdu.length) return null;
-                int count = apdu[offset] & 0xFF;
-                int pos = offset + 1;
-                for (int i = 0; i < count; i++) {
-                    byte[] result = findOctetString(apdu, pos);
-                    if (result != null) return result;
-                    int next = skipDataElement(apdu, pos);
-                    if (next <= pos || next >= apdu.length) break; // sicurezza: nessun progresso o fine buffer
-                    pos = next;
-                }
-                return null;
-            }
-            case 0x01: { // array: contatore (2 byte) + elementi
-                if (offset + 1 >= apdu.length) return null;
-                int count = ((apdu[offset] & 0xFF) << 8) | (apdu[offset + 1] & 0xFF);
-                int pos = offset + 2;
-                for (int i = 0; i < count; i++) {
-                    byte[] result = findOctetString(apdu, pos);
-                    if (result != null) return result;
-                    int next = skipDataElement(apdu, pos);
-                    if (next <= pos || next >= apdu.length) break;
-                    pos = next;
-                }
-                return null;
-            }
-            default:
-                return null;
-        }
-    }
+		log.info("DATA-NOTIFICATION da {} processata: CF{} → {} campi salvati", peerKey, cfData.getTemplateId(),
+				savedCount);
+	}
 
-    /**
-     * Calcola la posizione del prossimo elemento DLMS Data dopo quello
-     * che inizia a {@code offset}.
-     *
-     * @param apdu   buffer APDU
-     * @param offset offset del tag dell'elemento corrente
-     * @return offset del byte immediatamente successivo all'elemento
-     */
-    private int skipDataElement(byte[] apdu, int offset) {
-        if (offset >= apdu.length) return offset;
+	/**
+	 * Rimuove dalla map i contesti di riassemblaggio stantii. Viene invocato
+	 * periodicamente dal cleaner ogni 60 secondi. Tutela contro contatori che si
+	 * interrompono nel mezzo di un trasferimento GBT.
+	 */
+	private void cleanStaleSessions() {
+		Instant cutoff = Instant.now().minusMillis(config.getSessionTimeoutMs());
+		int before = sessions.size();
+		sessions.entrySet().removeIf(e -> e.getValue().lastActivity.isBefore(cutoff));
+		int removed = before - sessions.size();
+		if (removed > 0) {
+			log.info("Rimosse {} sessioni GBT stantie (timeout {}ms)", removed, config.getSessionTimeoutMs());
+		}
+	}
 
-        int tag = apdu[offset] & 0xFF;
-        offset++;
+	/**
+	 * Invia una risposta UDP con meccanismo di retry.
+	 *
+	 * @param data          dati da inviare
+	 * @param targetAddress indirizzo destinatario
+	 * @param targetPort    porta destinatario
+	 * @return true se l'invio ha avuto successo
+	 */
+	public boolean sendWithRetry(byte[] data, InetAddress targetAddress, int targetPort) {
+		for (int attempt = 1; attempt <= config.getRetryCount(); attempt++) {
+			try {
+				DatagramPacket response = new DatagramPacket(data, data.length, targetAddress, targetPort);
+				socket.send(response);
+				log.debug("Risposta UDP inviata a {}:{} (tentativo {})", targetAddress.getHostAddress(), targetPort,
+						attempt);
+				return true;
+			} catch (IOException e) {
+				log.warn("Invio risposta UDP fallito (tentativo {}/{}): {}", attempt, config.getRetryCount(),
+						e.getMessage());
+				if (attempt < config.getRetryCount()) {
+					try {
+						Thread.sleep(config.getRetryDelayMs());
+					} catch (InterruptedException ie) {
+						Thread.currentThread().interrupt();
+						return false;
+					}
+				}
+			}
+		}
+		log.error("Invio risposta UDP fallito dopo {} tentativi verso {}:{}", config.getRetryCount(),
+				targetAddress.getHostAddress(), targetPort);
+		return false;
+	}
 
-        switch (tag) {
-            case 0x00: return offset;               // null-data
-            case 0x03: return offset + 1;           // boolean
-            case 0x05: return offset + 4;           // int32
-            case 0x06: return offset + 4;           // unsigned int32
-            case 0x07: return offset + 8;           // int64
-            case 0x08: return offset + 8;           // unsigned int64
-            case 0x09:                              // octet-string
-            case 0x0A:                              // visible-string
-            case 0x0C: {                            // utf8-string
-                if (offset >= apdu.length) return offset;
-                int len = apdu[offset] & 0xFF;
-                return offset + 1 + len;
-            }
-            case 0x0F: return offset + 1;           // bcd
-            case 0x10: return offset + 1;           // integer (int8)
-            case 0x11: return offset + 2;           // long (int16)
-            case 0x12: return offset + 1;           // unsigned integer (uint8)
-            case 0x13: return offset + 2;           // long-unsigned (uint16)
-            case 0x15: return offset + 8;           // long64
-            case 0x16: return offset + 8;           // unsigned long64
-            case 0x17: return offset + 1;           // enum
-            case 0x18: return offset + 4;           // float32
-            case 0x19: return offset + 8;           // float64
-            case 0x1A: return offset + 12;          // date-time (12 byte)
-            case 0x1B: return offset + 5;           // date (5 byte)
-            case 0x1C: return offset + 4;           // time (4 byte)
-            case 0x1E: return offset;               // dont-care
-            case 0x02: {                            // structure
-                if (offset >= apdu.length) return offset;
-                int count = apdu[offset] & 0xFF;
-                int pos = offset + 1;
-                for (int i = 0; i < count; i++) {
-                    int next = skipDataElement(apdu, pos);
-                    if (next <= pos || next >= apdu.length) return apdu.length;
-                    pos = next;
-                }
-                return pos;
-            }
-            case 0x01: {                            // array
-                if (offset + 1 >= apdu.length) return offset;
-                int count = ((apdu[offset] & 0xFF) << 8) | (apdu[offset + 1] & 0xFF);
-                int pos = offset + 2;
-                for (int i = 0; i < count; i++) {
-                    int next = skipDataElement(apdu, pos);
-                    if (next <= pos || next >= apdu.length) return apdu.length;
-                    pos = next;
-                }
-                return pos;
-            }
-            default:
-                return apdu.length; // tag sconosciuto: segnala impossibilita' di avanzare
-        }
-    }
+	@PreDestroy
+	public void shutdown() {
+		running = false;
+		log.info("Arresto server UDP...");
 
-    /**
-     * Verifica se il template ID corrisponde a un tipo di compact frame supportato.
-     */
-    private boolean isKnownTemplate(int templateId) {
-        return switch (templateId) {
-            case 3, 4, 5, 6, 7, 8, 9, 22, 41, 47, 48, 49, 51 -> true;
-            default -> false;
-        };
-    }
+		if (cleaner != null) {
+			cleaner.shutdownNow();
+		}
+		if (socket != null && !socket.isClosed()) {
+			socket.close();
+		}
+		if (executor != null) {
+			executor.close();
+		}
+		sessions.clear();
+		log.info("Server UDP arrestato");
+	}
 
-    /**
-     * Salva tutti i valori scalari di una compact frame parsata in telemetry_data.
-     * I valori binari (profili, snapshot) vengono omessi perche' troppo grandi.
-     */
-    private void saveCompactFrameData(CompactFrameData cfData, String serialNumber,
-                                       String meterIp, String sessionId) {
-        Instant timestamp = cfData.getTimestamp() != null ? cfData.getTimestamp() : Instant.now();
-
-        for (var entry : cfData.getValues().entrySet()) {
-            String obisCode = entry.getKey();
-            Object value = entry.getValue();
-
-            if (value instanceof byte[]) continue;
-
-            telemetryService.save(serialNumber, meterIp, sessionId,
-                    obisCode, 62, value, 0, null, timestamp);
-        }
-    }
-
-    /**
-     * Invia una risposta UDP con meccanismo di retry.
-     *
-     * @param data           dati da inviare
-     * @param targetAddress  indirizzo destinatario
-     * @param targetPort     porta destinatario
-     * @return true se l'invio ha avuto successo
-     */
-    public boolean sendWithRetry(byte[] data, InetAddress targetAddress, int targetPort) {
-        for (int attempt = 1; attempt <= config.getRetryCount(); attempt++) {
-            try {
-                DatagramPacket response = new DatagramPacket(data, data.length, targetAddress, targetPort);
-                socket.send(response);
-                log.debug("Risposta UDP inviata a {}:{} (tentativo {})", targetAddress.getHostAddress(), targetPort, attempt);
-                return true;
-            } catch (IOException e) {
-                log.warn("Invio risposta UDP fallito (tentativo {}/{}): {}", attempt, config.getRetryCount(), e.getMessage());
-                if (attempt < config.getRetryCount()) {
-                    try {
-                        Thread.sleep(config.getRetryDelayMs());
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        return false;
-                    }
-                }
-            }
-        }
-        log.error("Invio risposta UDP fallito dopo {} tentativi verso {}:{}",
-                config.getRetryCount(), targetAddress.getHostAddress(), targetPort);
-        return false;
-    }
-
-    @PreDestroy
-    public void shutdown() {
-        running = false;
-        log.info("Arresto server UDP...");
-
-        if (socket != null && !socket.isClosed()) {
-            socket.close();
-        }
-        if (executor != null) {
-            executor.close();
-        }
-        log.info("Server UDP arrestato");
-    }
-
-    public boolean isRunning() {
-        return running;
-    }
+	public boolean isRunning() {
+		return running;
+	}
 }
